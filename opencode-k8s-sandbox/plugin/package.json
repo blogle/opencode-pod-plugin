@@ -1,0 +1,13 @@
+{
+  "name": "@opencode/k8s-sandbox-plugin",
+  "version": "0.1.0",
+  "description": "Plugin for opencode K8s sandbox integration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": ["opencode", "kubernetes", "sandbox"],
+  "license": "MIT"
+}
