@@ -40,4 +40,4 @@ See [docs/architecture.md](docs/architecture.md) for component design and ration
 
 - [Architecture](docs/architecture.md) - Component design
 - [Cluster Setup](docs/cluster-setup.md) - K8s prerequisites
-- [Sandbox Image](docs/sandbox-image.md) - Dockerfile for sandboxes
+- [Sandbox Image](docs/sandbox-image.md) - Dockerfile and cache setup for sandboxes

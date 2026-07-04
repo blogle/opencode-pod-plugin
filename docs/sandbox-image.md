@@ -76,3 +76,18 @@ When `nixCache` is configured in the plugin, each sandbox pod:
 - Cache pollution is accepted: arbitrary code in sandboxes can push anything
 - This is safe when the cache is only trusted by sandbox pods, not laptops/CI
 - Future upgrade: add a warmup controller that pre-builds common dev shells
+
+## Package Manager Caching (optional)
+
+When `packageCache.claimName` is configured, sandbox pods mount the shared PVC at `/cache` and set:
+
+```text
+CARGO_HOME=/cache/cargo
+NPM_CONFIG_CACHE=/cache/npm
+PNPM_STORE_DIR=/cache/pnpm
+YARN_CACHE_FOLDER=/cache/yarn
+PIP_CACHE_DIR=/cache/pip
+UV_CACHE_DIR=/cache/uv
+```
+
+The base deployment includes `opencode-package-cache` as a 5Gi RWX PVC. Patch `deploy/package-cache-pvc.yaml` if your cluster needs a specific StorageClass or access mode.

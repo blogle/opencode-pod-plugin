@@ -186,12 +186,68 @@ Apply the manifests:
 kubectl apply -k deploy/
 ```
 
+The base manifests create:
+
+- Router Deployment and Service
+- Router and plugin RBAC
+- `opencode-package-cache` PVC mounted by sandbox pods when `packageCache.claimName` is configured
+
+The base manifests do not create:
+
+- Wildcard Ingress or certificate
+- OpenCode server/plugin config
+- Attic or MinIO/S3 for Nix binary caching
+
+The package cache PVC defaults to `ReadWriteMany` and `5Gi`. If your cluster does not have an RWX default StorageClass, patch `deploy/package-cache-pvc.yaml` to use your storage class, or use a single-node/local StorageClass and keep sandbox pods on that node.
+
+## Plugin Config
+
+Minimal plugin config:
+
+```json
+{
+  "namespace": "opencode-sandbox",
+  "sandboxImage": "opencode-sandbox:latest",
+  "repos": {
+    "dotfiles": "git@github.com:example/dotfiles.git"
+  },
+  "baseDomain": "opencode.example.com",
+  "packageCache": {
+    "claimName": "opencode-package-cache"
+  }
+}
+```
+
+Optional Nix binary cache config:
+
+```json
+{
+  "nixCache": {
+    "endpoint": "https://attic.example.com",
+    "cache": "opencode",
+    "publicKey": "opencode:base64key=",
+    "tokenSecretName": "attic-creds"
+  }
+}
+```
+
+Create the Attic token Secret in the sandbox namespace before enabling `nixCache`:
+
+```bash
+kubectl create secret generic attic-creds \
+  --namespace opencode-sandbox \
+  --from-literal=attic-token=eyJ...
+```
+
+`nixCache` intentionally trusts sandbox pods to write back to the shared Attic cache. Do not point laptops or CI at that cache unless you accept sandbox-written paths as trusted.
+
 Verify the deployment:
 
 ```bash
 kubectl get pods -n opencode-sandbox
 kubectl get svc -n opencode-sandbox
 kubectl get ingress -n opencode-sandbox
+kubectl get pvc -n opencode-sandbox
 ```
 
 ## Testing
