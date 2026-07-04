@@ -3,6 +3,7 @@ target/
 node_modules/
 dist/
 *.lock
+!package-lock.json
 
 # Test files
 _test_*.ts
