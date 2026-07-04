@@ -102,6 +102,31 @@ describe("Config", () => {
     expect(config.nixCache?.cache).toBe("opencode");
     expect(config.nixCache?.tokenSecretKey).toBe("attic-token");
   });
+
+  it("should default packageCache to undefined", () => {
+    const pluginConfig = {
+      namespace: "test-namespace",
+      sandboxImage: "test-image",
+      repos: { "test-repo": "https://example.com/repo.git" },
+      baseDomain: "test.example.com",
+    };
+
+    const config = loadConfig(pluginConfig);
+    expect(config.packageCache).toBeUndefined();
+  });
+
+  it("should parse packageCache config", () => {
+    const pluginConfig = {
+      namespace: "test-namespace",
+      sandboxImage: "test-image",
+      repos: { "test-repo": "https://example.com/repo.git" },
+      baseDomain: "test.example.com",
+      packageCache: { enabled: true, storageSize: "5Gi" },
+    };
+
+    const config = loadConfig(pluginConfig);
+    expect(config.packageCache).toEqual({ enabled: true, storageSize: "5Gi" });
+  });
 });
 
 describe("SessionStore", () => {

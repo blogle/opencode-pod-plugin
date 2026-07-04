@@ -63,6 +63,16 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
     });
   }
 
+  // ponytail: packageCache is a simple emptyDir at /cache for download caches.
+  // Content-addressed caches (cargo registry, npm) are safe to share across pods.
+  const packageCacheEnabled = config.packageCache?.enabled ?? false;
+  if (packageCacheEnabled) {
+    volumes.push({
+      name: "package-cache",
+      emptyDir: { sizeLimit: config.packageCache!.storageSize },
+    });
+  }
+
   // Init container for git clone (if repo URL is provided)
   // Runs as root to chown /workspace to the main container's UID (1000)
   const initContainers: k8s.V1Container[] = repoUrl
@@ -139,6 +149,9 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
             ...(nixCacheEnabled
               ? [{ name: "attic-token", mountPath: "/var/run/secrets/attic", readOnly: true }]
               : []),
+            ...(packageCacheEnabled
+              ? [{ name: "package-cache", mountPath: "/cache" }]
+              : []),
           ],
           securityContext: {
             runAsNonRoot: true,
@@ -171,6 +184,16 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
                       },
                     },
                   },
+                ]
+              : []),
+            ...(packageCacheEnabled
+              ? [
+                  { name: "CARGO_HOME", value: "/cache/cargo" },
+                  { name: "NPM_CONFIG_CACHE", value: "/cache/npm" },
+                  { name: "PNPM_STORE_DIR", value: "/cache/pnpm" },
+                  { name: "YARN_CACHE_FOLDER", value: "/cache/yarn" },
+                  { name: "PIP_CACHE_DIR", value: "/cache/pip" },
+                  { name: "UV_CACHE_DIR", value: "/cache/uv" },
                 ]
               : []),
           ],

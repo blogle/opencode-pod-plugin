@@ -53,6 +53,16 @@ const ConfigSchema = z.object({
         .describe("Key within the secret containing the token value"),
     })
     .optional(),
+  // ponytail: packageCache is a simple node-local /cache mount for
+  // npm/cargo/pip download caches. Not a build cache — just avoids
+  // re-downloading tarballs on every pod. Upgrade path: sccache or
+  // remote build caches if compile caching matters.
+  packageCache: z
+    .object({
+      enabled: z.boolean().default(true),
+      storageSize: z.string().default("2Gi"),
+    })
+    .optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -108,6 +118,9 @@ export function loadConfig(pluginConfig: Record<string, unknown>): Config {
           tokenSecretName: string;
           tokenSecretKey?: string;
         }
+      | undefined,
+    packageCache: pluginConfig.packageCache as
+      | { enabled?: boolean; storageSize?: string }
       | undefined,
   };
 
