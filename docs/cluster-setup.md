@@ -183,7 +183,7 @@ Then point your Ingress to the oauth2-proxy service instead of the router direct
 Apply the manifests:
 
 ```bash
-kubectl apply -k opencode-k8s-sandbox/deploy/
+kubectl apply -k deploy/
 ```
 
 Verify the deployment:

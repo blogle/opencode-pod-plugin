@@ -19,19 +19,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: opencode-k8s-sandbox/router
+          workspaces: router
 
       - name: Format check
         run: cargo fmt --check
-        working-directory: opencode-k8s-sandbox/router
+        working-directory: router
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: opencode-k8s-sandbox/router
+        working-directory: router
 
       - name: Test
         run: cargo test
-        working-directory: opencode-k8s-sandbox/router
+        working-directory: router
 
   plugin-lint-test:
     name: Plugin (TypeScript)
@@ -43,19 +43,19 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: opencode-k8s-sandbox/plugin/package-lock.json
+          cache-dependency-path: plugin/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: opencode-k8s-sandbox/plugin
+        working-directory: plugin
 
       - name: Type check
         run: npx tsc --noEmit
-        working-directory: opencode-k8s-sandbox/plugin
+        working-directory: plugin
 
       - name: Test
         run: npm test
-        working-directory: opencode-k8s-sandbox/plugin
+        working-directory: plugin
 
   validate-manifests:
     name: Validate Kustomize manifests
@@ -69,4 +69,4 @@ jobs:
           kustomize-version: "5.4.1"
 
       - name: Validate kustomize build
-        run: kustomize build opencode-k8s-sandbox/deploy
+        run: kustomize build deploy
