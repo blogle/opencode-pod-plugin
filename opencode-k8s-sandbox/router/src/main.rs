@@ -5,6 +5,7 @@ mod proxy;
 
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tracing_subscriber::EnvFilter;
 
 use config::Config;
@@ -45,21 +46,22 @@ async fn main() {
     // Create the sandbox index
     let index = index::new_index();
 
+    // Create metrics (before reflector so we can pass it)
+    let metrics = Arc::new(Metrics::new());
+
     // Start the reflector
     if let Err(e) = index::start_reflector(
         k8s_client.clone(),
         config.namespace.as_deref(),
         &config.label_key,
         index.clone(),
+        metrics.clone(),
     )
     .await
     {
         tracing::error!("failed to start reflector: {}", e);
         std::process::exit(1);
     }
-
-    // Create metrics
-    let metrics = Arc::new(Metrics::new());
 
     // Start health listener
     let health_metrics = Arc::clone(&metrics);
@@ -82,6 +84,9 @@ async fn main() {
         .expect("failed to bind proxy addr");
     tracing::info!("proxy listener on {}", config.proxy_addr);
 
+    // Create semaphore for connection limiting
+    let semaphore = Arc::new(Semaphore::new(config.max_connections));
+
     loop {
         let (stream, addr) = proxy_listener
             .accept()
@@ -90,11 +95,21 @@ async fn main() {
 
         tracing::debug!("accepted connection from {}", addr);
 
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::warn!("semaphore closed, rejecting connection");
+                drop(stream);
+                continue;
+            }
+        };
+
         let index = index.clone();
         let config = config.clone();
         let metrics = Arc::clone(&metrics);
 
         tokio::spawn(async move {
+            let _permit = permit;
             proxy::handle_connection(stream, index, config, metrics).await;
         });
     }

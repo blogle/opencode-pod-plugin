@@ -47,15 +47,29 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
     mountPath: "/workspace",
   });
 
+  // Add tmp volume for writable temp directories (needed for readOnlyRootFilesystem)
+  volumes.push({
+    name: "tmp",
+    emptyDir: { sizeLimit: "100Mi" },
+  });
+
   // Init container for git clone (if repo URL is provided)
+  // Use pinned version instead of :latest for reproducibility
   const initContainers: k8s.V1Container[] = repoUrl
     ? [
         {
           name: "git-clone",
-          image: "alpine/git:latest",
-          imagePullPolicy: "Never",
+          image: "alpine/git:2.45.2-r0",
+          imagePullPolicy: "IfNotPresent",
           command: ["git", "clone", "--depth=1", repoUrl, "/workspace"],
           volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
+          securityContext: {
+            runAsNonRoot: false, // git clone needs to write
+            runAsUser: 0,
+            allowPrivilegeEscalation: false,
+            readOnlyRootFilesystem: false, // needs to write to workspace
+            capabilities: { drop: ["ALL"] },
+          },
         },
       ]
     : [];
@@ -74,7 +88,7 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
         {
           name: "sandbox",
           image: config.sandboxImage,
-          imagePullPolicy: "Never",
+          imagePullPolicy: config.imagePullPolicy ?? "IfNotPresent",
           command: ["sleep", "infinity"],
           resources: {
             requests: {
@@ -86,10 +100,35 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
               memory: config.resources.limits.memory,
             },
           },
-          volumeMounts,
+          volumeMounts: [
+            ...volumeMounts,
+            { name: "tmp", mountPath: "/tmp" },
+          ],
+          securityContext: {
+            runAsNonRoot: true,
+            runAsUser: 1000,
+            runAsGroup: 1000,
+            readOnlyRootFilesystem: true,
+            allowPrivilegeEscalation: false,
+            capabilities: { drop: ["ALL"] },
+            seccompProfile: {
+              type: "RuntimeDefault",
+            },
+          },
+          env: [
+            {
+              name: "TMPDIR",
+              value: "/tmp",
+            },
+          ],
         },
       ],
       volumes,
+      securityContext: {
+        seccompProfile: {
+          type: "RuntimeDefault",
+        },
+      },
     },
   };
 
@@ -117,7 +156,7 @@ export function buildPvcManifest(
       accessModes: ["ReadWriteOnce"],
       resources: {
         requests: {
-          storage: "1Gi",
+          storage: config.storageSize,
         },
       },
       storageClassName: config.storageClassName,

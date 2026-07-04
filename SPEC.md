@@ -28,7 +28,7 @@ CNI, or cloud the operator runs. All cluster-specific values are config.
 - No HA/multi-replica router. Single replica is fine; if it restarts, the
   in-memory pod index rebuilds from a fresh k8s watch (LIST + WATCH) in
   under a second.
-- No protocols other than HTTP/1.1, HTTP/2 cleartext, and WebSocket. No raw
+- No protocols other than HTTP/1.1 and WebSocket. No raw
   TCP passthrough for non-HTTP services.
 - No horizontal scaling of sandbox pods (one pod = one session, not a pool).
 - No resource-quota policy engine — just static requests/limits from config.

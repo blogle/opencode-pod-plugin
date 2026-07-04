@@ -7,17 +7,15 @@ metadata:
     app.kubernetes.io/name: opencode-k8s-sandbox-router
     app.kubernetes.io/managed-by: opencode-k8s-sandbox
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: opencode-k8s-sandbox-router
   ports:
     - name: proxy
       port: 8080
       targetPort: proxy
-      nodePort: 30080
       protocol: TCP
     - name: health
       port: 9090
       targetPort: health
-      nodePort: 30090
       protocol: TCP

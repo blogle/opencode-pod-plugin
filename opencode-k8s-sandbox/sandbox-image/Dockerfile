@@ -8,15 +8,18 @@ RUN apt-get update && \
       bash \
       direnv \
       ca-certificates \
-      openssh-client && \
+      openssh-client \
+      patch && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Determinate Nix (no init, no sandbox for Docker compatibility)
+# Install Determinate Nix (pinned version for reproducibility)
+# Using version 0.16.0 for stability
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | \
     sh -s -- install linux \
       --extra-conf "sandbox = false" \
       --init none \
-      --no-confirm
+      --no-confirm \
+      --version 0.16.0
 
 # Add nix to PATH for all users
 ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}"
@@ -30,3 +33,4 @@ RUN echo 'eval "$(direnv hook bash)"' >> /root/.bashrc && \
 RUN mkdir -p /workspace
 
 WORKDIR /workspace
+

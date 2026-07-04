@@ -10,7 +10,8 @@ export interface ExecResult {
 export async function execInPod(
   podName: string,
   namespace: string,
-  command: string[]
+  command: string[],
+  stdin?: string
 ): Promise<ExecResult> {
   const exec = getExecApi();
   const coreApi = getCoreV1Api();
@@ -30,6 +31,7 @@ export async function execInPod(
   return new Promise((resolve, reject) => {
     const stdoutStream = new stream.PassThrough();
     const stderrStream = new stream.PassThrough();
+    const stdinStream = stdin ? new stream.PassThrough() : null;
     let stdout = "";
     let stderr = "";
 
@@ -41,6 +43,12 @@ export async function execInPod(
       stderr += data.toString();
     });
 
+    // Write stdin content if provided
+    if (stdinStream && stdin !== undefined) {
+      stdinStream.write(stdin);
+      stdinStream.end();
+    }
+
     exec
       .exec(
         namespace,
@@ -49,13 +57,25 @@ export async function execInPod(
         command,
         stdoutStream,
         stderrStream,
-        null, // stdin
+        stdinStream,
         false, // tty
         (status) => {
+          // The exec callback receives V1Status. Exit code is in status.status
+          // "Success" means exit code 0, otherwise extract from message or default to 1
+          let exitCode = 1;
+          if (status.status === "Success") {
+            exitCode = 0;
+          } else if (status.message) {
+            // Try to extract exit code from message like "command terminated with exit code 137"
+            const match = status.message.match(/exit code (\d+)/);
+            if (match) {
+              exitCode = parseInt(match[1], 10);
+            }
+          }
           resolve({
             stdout,
             stderr,
-            exitCode: status.status === "Success" ? 0 : 1,
+            exitCode,
           });
         }
       )

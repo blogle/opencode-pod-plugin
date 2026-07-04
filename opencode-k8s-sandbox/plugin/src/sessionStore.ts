@@ -17,6 +17,10 @@ export class SessionStore {
     return this.sessions.get(sessionId);
   }
 
+  getAll(): Map<string, SandboxRecord> {
+    return new Map(this.sessions);
+  }
+
   delete(sessionId: string): boolean {
     return this.sessions.delete(sessionId);
   }

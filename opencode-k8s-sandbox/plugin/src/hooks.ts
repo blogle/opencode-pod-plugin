@@ -1,9 +1,13 @@
 import * as crypto from "crypto";
 import * as k8s from "@kubernetes/client-node";
 import { Config } from "./config.js";
-import { SessionStore } from "./sessionStore.js";
+import { SessionStore, SandboxRecord } from "./sessionStore.js";
 import { getCoreV1Api } from "./k8s/client.js";
 import { buildPodManifest, buildPvcManifest } from "./k8s/podSpec.js";
+
+const SANDBOX_ID_LABEL = "opencode.dev/sandbox-id";
+const SESSION_ID_ANNOTATION = "opencode.dev/session-id";
+const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 
 export interface PluginInput {
   sessionId: string;
@@ -37,6 +41,77 @@ async function waitForPodRunning(
   }
 
   throw new Error(`Pod ${podName} did not reach Running state within ${timeoutSeconds}s`);
+}
+
+/**
+ * Reconcile existing sandbox pods on startup.
+ * Lists all pods with our managed-by label and adopts any not in sessionStore.
+ * This handles plugin restarts where session state was lost.
+ */
+export async function reconcileExistingPods(
+  config: Config,
+  sessionStore: SessionStore
+): Promise<void> {
+  const coreApi = getCoreV1Api();
+
+  try {
+    const pods = await coreApi.listNamespacedPod({
+      namespace: config.namespace,
+      labelSelector: `${MANAGED_BY_LABEL}=opencode-k8s-sandbox`,
+    });
+
+    for (const pod of pods.items ?? []) {
+      const sandboxId = pod.metadata?.labels?.[SANDBOX_ID_LABEL];
+      const sessionId = pod.metadata?.annotations?.[SESSION_ID_ANNOTATION];
+      const podName = pod.metadata?.name;
+
+      if (!sandboxId || !podName) continue;
+
+      // Check if this pod is already tracked
+      const allSessions = sessionStore.getAll();
+      const existingRecord = Array.from(allSessions.values()).find(
+        (r) => r.sandboxId === sandboxId
+      );
+
+      if (existingRecord) {
+        // Already tracked, skip
+        continue;
+      }
+
+      // Check if pod is running
+      if (pod.status?.phase !== "Running") {
+        console.log(
+          `Cleaning up non-running orphaned pod: ${podName} (phase: ${pod.status?.phase})`
+        );
+        try {
+          await coreApi.deleteNamespacedPod({
+            name: podName,
+            namespace: config.namespace,
+          });
+        } catch (err) {
+          console.warn(`Failed to delete orphaned pod ${podName}: ${err}`);
+        }
+        continue;
+      }
+
+      // Adopt this orphaned pod - it's running but not tracked
+      // We can't recover the sessionId, so we use a synthetic one
+      const recoveredSessionId = `recovered-${Date.now()}-${sandboxId}`;
+      console.log(
+        `Adopting orphaned pod: ${podName} (sandbox: ${sandboxId})`
+      );
+
+      sessionStore.set(recoveredSessionId, {
+        sandboxId,
+        podName,
+        repoUrl: undefined,
+        createdAt: pod.metadata?.creationTimestamp ?? new Date(),
+        lastActiveAt: new Date(),
+      });
+    }
+  } catch (error) {
+    console.warn(`Failed to reconcile existing pods: ${error}`);
+  }
 }
 
 export async function sessionCreated(input: PluginInput): Promise<void> {

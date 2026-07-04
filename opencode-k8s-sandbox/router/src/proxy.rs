@@ -50,33 +50,46 @@ async fn handle_connection_inner(
     index: &SandboxIndex,
     config: &Config,
     metrics: &Metrics,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use tokio::io::AsyncReadExt;
 
     // Read until we find \r\n\r\n (headers complete) or exceed max header size
+    // Use a timeout to prevent slowloris-style attacks
     let mut buf = Vec::with_capacity(4096);
     let mut tmp = [0u8; 1024];
-    let header_end;
 
-    loop {
-        let n = stream.read(&mut tmp).await?;
-        if n == 0 {
-            return Err("connection closed before headers complete".into());
+    let header_timeout = std::time::Duration::from_millis(config.header_timeout_ms);
+    let read_result = tokio::time::timeout(header_timeout, async {
+        loop {
+            let n = stream.read(&mut tmp).await?;
+            if n == 0 {
+                return Err::<usize, Box<dyn std::error::Error + Send + Sync>>("connection closed before headers complete".into());
+            }
+            buf.extend_from_slice(&tmp[..n]);
+
+            if buf.len() > config.max_header_bytes {
+                stream
+                    .write_all(b"HTTP/1.1 400 Header Too Large\r\nContent-Length: 0\r\n\r\n")
+                    .await?;
+                return Err("header too large".into());
+            }
+
+            if let Some(pos) = find_header_end(&buf) {
+                return Ok(pos);
+            }
         }
-        buf.extend_from_slice(&tmp[..n]);
+    }).await;
 
-        if buf.len() > config.max_header_bytes {
+    let header_end = match read_result {
+        Ok(Ok(pos)) => pos,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
             stream
-                .write_all(b"HTTP/1.1 400 Header Too Large\r\nContent-Length: 0\r\n\r\n")
+                .write_all(b"HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n")
                 .await?;
-            return Err("header too large".into());
+            return Err("header read timeout".into());
         }
-
-        if let Some(pos) = find_header_end(&buf) {
-            header_end = pos;
-            break;
-        }
-    }
+    };
 
     // Parse headers with httparse
     let mut headers = [httparse::EMPTY_HEADER; 32];
@@ -107,6 +120,16 @@ async fn handle_connection_inner(
         }
     };
     let host_str = std::str::from_utf8(host.value)?;
+
+    // Validate base domain if configured
+    if let Some(ref base_domain) = config.base_domain {
+        if !host_str.ends_with(base_domain) {
+            stream
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+                .await?;
+            return Err("hostname does not match base domain".into());
+        }
+    }
 
     // Parse the hostname
     let parsed = match parse_host(host_str) {
@@ -158,15 +181,20 @@ async fn handle_connection_inner(
         }
     };
 
-    // Write the buffered header bytes to the backend, then splice bidirectionally
+    // Write the buffered header bytes AND any body bytes already read to the backend
+    // header_end is the index of the last \n in \r\n\r\n, so we need header_end + 1
+    // to include all bytes up to and including the header terminator
     backend.write_all(&buf[..=header_end]).await?;
+
+    // If we read past the header end, those bytes are body data that must be forwarded
+    if buf.len() > header_end + 1 {
+        backend.write_all(&buf[header_end + 1..]).await?;
+    }
 
     // Bidirectional copy for the rest of the connection
     let (bytes_copied, _) = tokio::io::copy_bidirectional(stream, &mut backend).await?;
 
-    for _ in 0..bytes_copied {
-        metrics.bytes_proxied.inc();
-    }
+    metrics.bytes_proxied.inc_by(bytes_copied);
 
     Ok(())
 }

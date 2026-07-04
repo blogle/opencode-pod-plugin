@@ -8,6 +8,10 @@ const ResourceRequirementsSchema = z.object({
 const ConfigSchema = z.object({
   namespace: z.string().describe("Kubernetes namespace for sandbox pods"),
   sandboxImage: z.string().describe("Container image for sandbox pods"),
+  imagePullPolicy: z
+    .enum(["Always", "IfNotPresent", "Never"])
+    .default("IfNotPresent")
+    .describe("Image pull policy for sandbox pods"),
   repos: z
     .record(z.string(), z.string())
     .describe("Map of project names to git repository URLs"),
@@ -29,6 +33,7 @@ const ConfigSchema = z.object({
     .default({}),
   persistWorkspace: z.boolean().default(false),
   storageClassName: z.string().optional(),
+  storageSize: z.string().default("1Gi").describe("PVC storage size when persistWorkspace is true"),
   idleTimeoutMinutes: z.number().default(60),
   podStartupTimeoutSeconds: z.number().default(30),
 });
@@ -37,11 +42,23 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 export function loadConfig(pluginConfig: Record<string, unknown>): Config {
   // Load from plugin config with env var overrides
+  // For persistWorkspace, env var "false" should override config true
+  const persistWorkspaceEnv = process.env.SANDBOX_PERSIST_WORKSPACE;
+  let persistWorkspace: boolean;
+  if (persistWorkspaceEnv !== undefined) {
+    persistWorkspace = persistWorkspaceEnv === "true";
+  } else {
+    persistWorkspace = (pluginConfig.persistWorkspace as boolean) ?? false;
+  }
+
   const envConfig = {
     namespace:
       process.env.SANDBOX_NAMESPACE || (pluginConfig.namespace as string),
     sandboxImage:
       process.env.SANDBOX_IMAGE || (pluginConfig.sandboxImage as string),
+    imagePullPolicy:
+      process.env.SANDBOX_IMAGE_PULL_POLICY ||
+      (pluginConfig.imagePullPolicy as string),
     repos: (() => {
       // Support JSON string via env var
       const envRepos = process.env.SANDBOX_REPOS;
@@ -56,12 +73,13 @@ export function loadConfig(pluginConfig: Record<string, unknown>): Config {
     baseDomain:
       process.env.SANDBOX_BASE_DOMAIN || (pluginConfig.baseDomain as string),
     resources: pluginConfig.resources as Record<string, unknown> | undefined,
-    persistWorkspace:
-      process.env.SANDBOX_PERSIST_WORKSPACE === "true" ||
-      (pluginConfig.persistWorkspace as boolean),
+    persistWorkspace,
     storageClassName:
       process.env.SANDBOX_STORAGE_CLASS ||
       (pluginConfig.storageClassName as string),
+    storageSize:
+      process.env.SANDBOX_STORAGE_SIZE ||
+      (pluginConfig.storageSize as string),
     idleTimeoutMinutes: pluginConfig.idleTimeoutMinutes as number | undefined,
     podStartupTimeoutSeconds:
       pluginConfig.podStartupTimeoutSeconds as number | undefined,

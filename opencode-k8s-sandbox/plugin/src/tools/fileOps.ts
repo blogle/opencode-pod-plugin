@@ -9,8 +9,10 @@ export async function readFile(
   ctx: FileOpsContext,
   path: string
 ): Promise<string> {
+  // Use array form to avoid shell interpretation of path
   const result = await execInPod(ctx.podName, ctx.namespace, [
     "/bin/cat",
+    "--",
     path,
   ]);
 
@@ -26,13 +28,14 @@ export async function writeFile(
   path: string,
   content: string
 ): Promise<void> {
-  // Use base64 encoding for binary safety
+  // Use base64 encoding for binary safety, pass via stdin to avoid shell injection
   const encoded = Buffer.from(content).toString("base64");
-  const result = await execInPod(ctx.podName, ctx.namespace, [
-    "/bin/bash",
-    "-c",
-    `echo "${encoded}" | base64 -d > ${path}`,
-  ]);
+  const result = await execInPod(
+    ctx.podName,
+    ctx.namespace,
+    ["/bin/bash", "-c", "base64 -d > \"$1\"", "--", path],
+    encoded
+  );
 
   if (result.exitCode !== 0) {
     throw new Error(`Failed to write file ${path}: ${result.stderr}`);

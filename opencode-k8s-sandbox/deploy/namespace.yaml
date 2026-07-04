@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opencode-sandbox
+  labels:
+    app.kubernetes.io/name: opencode-k8s-sandbox
+    app.kubernetes.io/managed-by: opencode-k8s-sandbox

@@ -5,6 +5,7 @@ import {
   sessionDeleted,
   setupIdleSweep,
   getSystemPromptTransform,
+  reconcileExistingPods,
 } from "./hooks.js";
 import { bashOverride } from "./tools/bash.js";
 import { readFile, writeFile, editFile } from "./tools/fileOps.js";
@@ -56,6 +57,9 @@ export const K8sSandboxPlugin = async (ctx: OpenCodeContext) => {
     sessionStore,
     repoMapping,
   };
+
+  // Reconcile existing pods on startup to handle plugin restarts
+  await reconcileExistingPods(config, sessionStore);
 
   const idleSweepInterval = setupIdleSweep(config, sessionStore);
 

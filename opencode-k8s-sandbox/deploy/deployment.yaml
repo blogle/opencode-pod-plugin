@@ -18,10 +18,17 @@ spec:
         app.kubernetes.io/managed-by: opencode-k8s-sandbox
     spec:
       serviceAccountName: opencode-k8s-sandbox-router
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: router
           image: opencode-k8s-sandbox-router:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - name: proxy
               containerPort: 8080
@@ -47,6 +54,12 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           livenessProbe:
             httpGet:
               path: /healthz
@@ -59,3 +72,10 @@ spec:
               port: health
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi

@@ -7,6 +7,8 @@ use kube::api::Api;
 use kube::runtime::{reflector, watcher};
 use kube::Client;
 
+use crate::health::SharedMetrics;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PodInfo {
     pub pod_ip: String,
@@ -26,6 +28,7 @@ pub async fn start_reflector(
     namespace: Option<&str>,
     label_key: &str,
     index: SandboxIndex,
+    metrics: SharedMetrics,
 ) -> Result<(), kube::Error> {
     let pods: Api<Pod> = match namespace {
         Some(ns) => Api::namespaced(client, ns),
@@ -49,6 +52,7 @@ pub async fn start_reflector(
     let rf = reflector(writer, w);
 
     // Spawn the reflector watcher in the background using Box::pin for the stream
+    let metrics_clone = metrics.clone();
     tokio::spawn(async move {
         use futures::StreamExt;
         let mut r = Box::pin(rf);
@@ -56,13 +60,16 @@ pub async fn start_reflector(
             match event {
                 Ok(_event) => {
                     tracing::debug!("reflector event");
+                    metrics_clone.reflector_healthy.set(1);
                 }
                 Err(e) => {
                     tracing::error!("reflector error: {}", e);
+                    metrics_clone.reflector_healthy.set(0);
                 }
             }
         }
         tracing::warn!("reflector stream ended");
+        metrics_clone.reflector_healthy.set(0);
     });
 
     // Spawn the index updater that reads from the reflector store

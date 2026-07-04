@@ -12,6 +12,7 @@ export async function lsOverride(
   const result = await execInPod(ctx.podName, ctx.namespace, [
     "/bin/ls",
     "-la",
+    "--",
     path,
   ]);
 
@@ -26,10 +27,13 @@ export async function globOverride(
   ctx: ToolContext,
   pattern: string
 ): Promise<string> {
+  // Use find with argument array to avoid shell interpretation
   const result = await execInPod(ctx.podName, ctx.namespace, [
     "/bin/bash",
     "-c",
-    `find . -name "${pattern}" -type f 2>/dev/null | head -100`,
+    "find . -name \"$1\" -type f 2>/dev/null | head -100",
+    "--",
+    pattern,
   ]);
 
   if (result.exitCode !== 0) {
@@ -48,6 +52,7 @@ export async function grepOverride(
     "/bin/grep",
     "-r",
     "--include=*",
+    "--",
     pattern,
     path,
   ]);
@@ -78,21 +83,38 @@ export async function multieditOverride(
   ctx: ToolContext,
   operations: EditOperation[]
 ): Promise<void> {
-  // Apply each edit sequentially through the existing execInPod primitive
+  // Read the file once, apply all replacements in memory, write once
+  // This is safer than shell-based sed/perl and handles all edge cases
   for (const op of operations) {
-    // Read the file, apply the replacement, write it back
-    // Using sed for in-place replacement
-    const escapedOld = op.oldString.replace(/[\/&]/g, '\\$&');
-    const escapedNew = op.newString.replace(/[\/&]/g, '\\$&');
-    const result = await execInPod(ctx.podName, ctx.namespace, [
-      "/bin/sed",
-      "-i",
-      `s/${escapedOld}/${escapedNew}/g`,
+    // Read the file
+    const readResult = await execInPod(ctx.podName, ctx.namespace, [
+      "/bin/cat",
+      "--",
       op.path,
     ]);
 
-    if (result.exitCode !== 0) {
-      throw new Error(`multiedit failed on ${op.path}: ${result.stderr}`);
+    if (readResult.exitCode !== 0) {
+      throw new Error(`Failed to read ${op.path}: ${readResult.stderr}`);
+    }
+
+    const content = readResult.stdout;
+    if (!content.includes(op.oldString)) {
+      throw new Error(`String not found in ${op.path}`);
+    }
+
+    // Replace in memory
+    const updatedContent = content.replace(op.oldString, op.newString);
+
+    // Write back using stdin
+    const writeResult = await execInPod(
+      ctx.podName,
+      ctx.namespace,
+      ["/bin/bash", "-c", "cat > \"$1\"", "--", op.path],
+      updatedContent
+    );
+
+    if (writeResult.exitCode !== 0) {
+      throw new Error(`Failed to write ${op.path}: ${writeResult.stderr}`);
     }
   }
 }
@@ -101,13 +123,13 @@ export async function applyPatchOverride(
   ctx: ToolContext,
   patchContent: string
 ): Promise<string> {
-  // Apply unified diff patch using the pod's patch command
-  // Write patch to temp file, apply, then clean up
-  const result = await execInPod(ctx.podName, ctx.namespace, [
-    "/bin/bash",
-    "-c",
-    `echo '${patchContent.replace(/'/g, "'\\''")}' | patch -p1`,
-  ]);
+  // Use stdin to pass patch content safely, avoiding shell injection
+  const result = await execInPod(
+    ctx.podName,
+    ctx.namespace,
+    ["/usr/bin/patch", "-p1"],
+    patchContent
+  );
 
   if (result.exitCode !== 0) {
     throw new Error(`apply_patch failed with exit code ${result.exitCode}: ${result.stderr}`);
