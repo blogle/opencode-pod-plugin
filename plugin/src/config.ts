@@ -53,14 +53,13 @@ const ConfigSchema = z.object({
         .describe("Key within the secret containing the token value"),
     })
     .optional(),
-  // ponytail: packageCache is a simple node-local /cache mount for
-  // npm/cargo/pip download caches. Not a build cache — just avoids
-  // re-downloading tarballs on every pod. Upgrade path: sccache or
-  // remote build caches if compile caching matters.
+  // ponytail: packageCache mounts a shared PVC at /cache for download
+  // caches (cargo, npm, pnpm, etc). Operator pre-creates the PVC; plugin
+  // just references it. RWX or single-node is fine since these caches
+  // are content-addressed and concurrent-safe.
   packageCache: z
     .object({
-      enabled: z.boolean().default(true),
-      storageSize: z.string().default("2Gi"),
+      claimName: z.string().describe("PVC name for shared package cache"),
     })
     .optional(),
 });
@@ -120,7 +119,7 @@ export function loadConfig(pluginConfig: Record<string, unknown>): Config {
         }
       | undefined,
     packageCache: pluginConfig.packageCache as
-      | { enabled?: boolean; storageSize?: string }
+      | { claimName: string }
       | undefined,
   };
 

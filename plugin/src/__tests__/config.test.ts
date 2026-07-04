@@ -121,11 +121,11 @@ describe("Config", () => {
       sandboxImage: "test-image",
       repos: { "test-repo": "https://example.com/repo.git" },
       baseDomain: "test.example.com",
-      packageCache: { enabled: true, storageSize: "5Gi" },
+      packageCache: { claimName: "my-cache-pvc" },
     };
 
     const config = loadConfig(pluginConfig);
-    expect(config.packageCache).toEqual({ enabled: true, storageSize: "5Gi" });
+    expect(config.packageCache).toEqual({ claimName: "my-cache-pvc" });
   });
 });
 

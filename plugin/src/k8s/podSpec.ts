@@ -63,13 +63,13 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
     });
   }
 
-  // ponytail: packageCache is a simple emptyDir at /cache for download caches.
-  // Content-addressed caches (cargo registry, npm) are safe to share across pods.
-  const packageCacheEnabled = config.packageCache?.enabled ?? false;
+  // ponytail: packageCache mounts a shared PVC at /cache for download caches.
+  // Operator pre-creates the PVC. Content-addressed caches are concurrent-safe.
+  const packageCacheEnabled = !!config.packageCache;
   if (packageCacheEnabled) {
     volumes.push({
       name: "package-cache",
-      emptyDir: { sizeLimit: config.packageCache!.storageSize },
+      persistentVolumeClaim: { claimName: config.packageCache!.claimName },
     });
   }
 
