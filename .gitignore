@@ -1,0 +1,18 @@
+# Build artifacts
+target/
+node_modules/
+dist/
+*.lock
+
+# Test files
+_test_*.ts
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo

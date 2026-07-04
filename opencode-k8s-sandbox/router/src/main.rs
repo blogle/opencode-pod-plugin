@@ -1,29 +1,101 @@
-use axum::{
-    routing::get,
-    Router,
-};
-use std::net::SocketAddr;
-use tower_http::trace::TraceLayer;
+mod config;
+mod health;
+mod index;
+mod proxy;
+
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tracing_subscriber::EnvFilter;
+
+use config::Config;
+use health::Metrics;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    let config = Config::from_env();
 
-    let app = Router::new()
-        .route("/", get(root))
-        .layer(TraceLayer::new_for_http());
+    // Initialize tracing with env-filter
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+        )
+        .init();
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("listening on {}", addr);
+    tracing::info!("starting opencode-k8s-sandbox-router");
+    tracing::info!("proxy addr: {}", config.proxy_addr);
+    tracing::info!("health addr: {}", config.health_addr);
 
-    let listener = tokio::net::TcpListener::bind(addr)
+    // Build k8s client (in-cluster by default, fallback to kubeconfig)
+    let k8s_client = match kube::Client::try_default().await {
+        Ok(client) => {
+            tracing::info!("kubernetes client initialized (in-cluster)");
+            client
+        }
+        Err(e) => {
+            tracing::warn!("in-cluster config failed ({}), trying kubeconfig", e);
+            kube::Client::try_from(
+                kube::config::Config::from_kubeconfig(&Default::default())
+                    .await
+                    .unwrap(),
+            )
+            .expect("failed to create kubernetes client")
+        }
+    };
+
+    // Create the sandbox index
+    let index = index::new_index();
+
+    // Start the reflector
+    if let Err(e) = index::start_reflector(
+        k8s_client.clone(),
+        config.namespace.as_deref(),
+        &config.label_key,
+        index.clone(),
+    )
+    .await
+    {
+        tracing::error!("failed to start reflector: {}", e);
+        std::process::exit(1);
+    }
+
+    // Create metrics
+    let metrics = Arc::new(Metrics::new());
+
+    // Start health listener
+    let health_metrics = Arc::clone(&metrics);
+    let health_addr = config.health_addr.clone();
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(&health_addr)
+            .await
+            .expect("failed to bind health addr");
+        tracing::info!("health listener on {}", health_addr);
+
+        let app = health::router(health_metrics);
+        axum::serve(listener, app)
+            .await
+            .expect("health server failed");
+    });
+
+    // Start proxy listener
+    let proxy_listener = TcpListener::bind(&config.proxy_addr)
         .await
-        .unwrap();
-    axum::serve(listener, app)
-        .await
-        .unwrap();
-}
+        .expect("failed to bind proxy addr");
+    tracing::info!("proxy listener on {}", config.proxy_addr);
 
-async fn root() -> &'static str {
-    "opencode-k8s-sandbox-router"
+    loop {
+        let (stream, addr) = proxy_listener
+            .accept()
+            .await
+            .expect("failed to accept connection");
+
+        tracing::debug!("accepted connection from {}", addr);
+
+        let index = index.clone();
+        let config = config.clone();
+        let metrics = Arc::clone(&metrics);
+
+        tokio::spawn(async move {
+            proxy::handle_connection(stream, index, config, metrics).await;
+        });
+    }
 }

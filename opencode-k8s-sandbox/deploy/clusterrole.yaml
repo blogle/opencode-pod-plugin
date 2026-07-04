@@ -1,0 +1,11 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opencode-k8s-sandbox-router
+  labels:
+    app.kubernetes.io/name: opencode-k8s-sandbox-router
+    app.kubernetes.io/managed-by: opencode-k8s-sandbox
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]

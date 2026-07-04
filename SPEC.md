@@ -271,25 +271,33 @@ one primitive rather than each reimplementing exec plumbing:
 
 ### 5.7 Session-creation input (repo URL)
 
-OpenCode's session creation doesn't natively carry "which repo" — decide
-one of two approaches and document the choice in the README:
+OpenCode's session creation doesn't natively carry "which repo". The plugin
+uses a **manifest-based approach** with automatic project discovery:
 
-- **Option A (simpler, recommended for v1):** read the repo URL from the
-  plugin's own config (one fixed repo per OpenCode server deployment,
-  matching "we're both iterating on the same web app together").
-- **Option B (per-session):** require the first user message to include a
-  repo URL, parsed via a regex, before pod creation proceeds — needed only
-  if this plugin is meant to serve multiple unrelated projects from one
-  OpenCode server. Not required for the stated use case; leave as a
-  documented extension point, don't build it in v1.
+1. **Manifest config**: Operator defines a `repos` map in plugin config
+   mapping project names to git URLs.
+2. **Server-side cloning**: On plugin init, repos are shallow-cloned into
+   subdirectories under the worktree (e.g., `{worktree}/repos/{name}/`).
+3. **Project discovery**: OpenCode lists child directories as available
+   projects in the UI. Users select a project by opening a session in it.
+4. **Session creation**: When `session.created` fires, the plugin detects
+   the current directory via `client.path.get()`, maps it to a repo URL,
+   and passes the URL to the pod's init container for cloning.
+
+This approach:
+- Requires no custom UI — leverages OpenCode's native project listing
+- Supports multiple repos from a single OpenCode server
+- Re-clones repos on plugin init to pick up upstream changes
+- Creates pods with the selected repo cloned via init container (~5-15s cold start)
 
 ### 5.8 Config (`config.ts`, zod-validated)
 
 | Key | Required | Default | Notes |
 |---|---|---|---|
 | `namespace` | yes | — | where sandbox pods are created |
-| `sandboxImage` | yes | — | operator-supplied image |
-| `repoUrl` | yes (v1, see 5.7) | — | cloned into every sandbox |
+| `sandboxImage` | yes | — | operator-supplied image (needs nix + direnv) |
+| `repos` | yes | — | map of project names to git URLs |
+| `repoBaseDir` | no | `repos` | subdirectory under worktree for clones |
 | `baseDomain` | yes | — | must match router's serving domain |
 | `resources.requests.cpu` / `.memory` | no | `250m` / `256Mi` | |
 | `resources.limits.cpu` / `.memory` | no | `2` / `2Gi` | |
@@ -298,9 +306,26 @@ one of two approaches and document the choice in the README:
 | `idleTimeoutMinutes` | no | `60` | |
 | `podStartupTimeoutSeconds` | no | `30` | |
 
+Example config:
+```json
+{
+  "namespace": "opencode-sandbox",
+  "sandboxImage": "opencode-sandbox:latest",
+  "repos": {
+    "frontend": "git@github.com:org/frontend.git",
+    "api": "git@github.com:org/api.git"
+  },
+  "baseDomain": "opencode.example.com"
+}
+```
+
 Loaded from OpenCode's plugin config block (per OpenCode's plugin config
-convention) with env-var overrides for anything secret-adjacent (none of
-the above are secrets, but keep the pattern consistent for future fields).
+convention) with env-var overrides:
+- `SANDBOX_NAMESPACE` → `namespace`
+- `SANDBOX_IMAGE` → `sandboxImage`
+- `SANDBOX_REPOS` → `repos` (JSON string)
+- `SANDBOX_REPO_BASE_DIR` → `repoBaseDir`
+- `SANDBOX_BASE_DOMAIN` → `baseDomain`
 
 ## 6. Cluster prerequisites (one-time, operator-performed, not automated by either component)
 
