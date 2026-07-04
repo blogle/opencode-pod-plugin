@@ -26,6 +26,15 @@ async fn main() {
     tracing::info!("proxy addr: {}", config.proxy_addr);
     tracing::info!("health addr: {}", config.health_addr);
 
+    if let Some(ref base_domain) = config.base_domain {
+        tracing::info!("base domain: {}", base_domain);
+    } else {
+        tracing::warn!(
+            "ROUTER_BASE_DOMAIN not set - Host header domain validation is disabled. \
+             This is insecure for production use. Set ROUTER_BASE_DOMAIN to enable validation."
+        );
+    }
+
     // Build k8s client (in-cluster by default, fallback to kubeconfig)
     let k8s_client = match kube::Client::try_default().await {
         Ok(client) => {

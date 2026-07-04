@@ -14,12 +14,11 @@ RUN apt-get update && \
 
 # Install Determinate Nix (pinned version for reproducibility)
 # Using version 0.16.0 for stability
-RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | \
+RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix/tag/v0.16.0 | \
     sh -s -- install linux \
       --extra-conf "sandbox = false" \
       --init none \
-      --no-confirm \
-      --version 0.16.0
+      --no-confirm
 
 # Add nix to PATH for all users
 ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}"

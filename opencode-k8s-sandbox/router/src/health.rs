@@ -18,10 +18,14 @@ impl Metrics {
             IntGauge::new("active_connections", "Number of active connections").unwrap();
         let total_connections =
             IntCounter::new("total_connections", "Total connections accepted").unwrap();
-        let lookup_misses = IntCounter::new("lookup_misses", "Total sandbox lookup misses").unwrap();
+        let lookup_misses =
+            IntCounter::new("lookup_misses", "Total sandbox lookup misses").unwrap();
         let bytes_proxied = IntCounter::new("bytes_proxied", "Total bytes proxied").unwrap();
-        let reflector_healthy =
-            IntGauge::new("reflector_healthy", "Whether the reflector is healthy (1=healthy)").unwrap();
+        let reflector_healthy = IntGauge::new(
+            "reflector_healthy",
+            "Whether the reflector is healthy (1=healthy)",
+        )
+        .unwrap();
 
         registry
             .register(Box::new(active_connections.clone()))
@@ -31,7 +35,9 @@ impl Metrics {
             .unwrap();
         registry.register(Box::new(lookup_misses.clone())).unwrap();
         registry.register(Box::new(bytes_proxied.clone())).unwrap();
-        registry.register(Box::new(reflector_healthy.clone())).unwrap();
+        registry
+            .register(Box::new(reflector_healthy.clone()))
+            .unwrap();
 
         Self {
             active_connections,

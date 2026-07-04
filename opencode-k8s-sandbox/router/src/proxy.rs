@@ -63,7 +63,9 @@ async fn handle_connection_inner(
         loop {
             let n = stream.read(&mut tmp).await?;
             if n == 0 {
-                return Err::<usize, Box<dyn std::error::Error + Send + Sync>>("connection closed before headers complete".into());
+                return Err::<usize, Box<dyn std::error::Error + Send + Sync>>(
+                    "connection closed before headers complete".into(),
+                );
             }
             buf.extend_from_slice(&tmp[..n]);
 
@@ -78,7 +80,8 @@ async fn handle_connection_inner(
                 return Ok(pos);
             }
         }
-    }).await;
+    })
+    .await;
 
     let header_end = match read_result {
         Ok(Ok(pos)) => pos,
@@ -121,9 +124,33 @@ async fn handle_connection_inner(
     };
     let host_str = std::str::from_utf8(host.value)?;
 
-    // Validate base domain if configured
+    // Strip port from Host header if present (e.g., "host:8080" -> "host")
+    // Handles both "hostname:port" and "[ipv6]:port" formats
+    let host_without_port = if host_str.starts_with('[') {
+        // IPv6: find "]:" pattern
+        if let Some(bracket_end) = host_str.find("]:") {
+            &host_str[1..bracket_end]
+        } else {
+            host_str
+        }
+    } else {
+        match host_str.rfind(':') {
+            Some(pos) => {
+                let after_colon = &host_str[pos + 1..];
+                if after_colon.parse::<u16>().is_ok() {
+                    &host_str[..pos]
+                } else {
+                    host_str
+                }
+            }
+            None => host_str,
+        }
+    };
+
+    // Validate base domain if configured - require .{baseDomain} suffix exactly
     if let Some(ref base_domain) = config.base_domain {
-        if !host_str.ends_with(base_domain) {
+        let expected_suffix = format!(".{}", base_domain);
+        if !host_without_port.ends_with(&expected_suffix) {
             stream
                 .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
                 .await?;
@@ -131,8 +158,8 @@ async fn handle_connection_inner(
         }
     }
 
-    // Parse the hostname
-    let parsed = match parse_host(host_str) {
+    // Parse the hostname (use host_without_port for validation)
+    let parsed = match parse_host(host_without_port) {
         Some(p) => p,
         None => {
             stream
@@ -271,5 +298,20 @@ mod tests {
     fn test_find_header_end_not_found() {
         let buf = b"GET / HTTP/1.1\r\nHost: test";
         assert!(find_header_end(buf).is_none());
+    }
+
+    #[test]
+    fn test_parse_host_rejects_subdomain_spoofing() {
+        // evil-sandbox.example.com should NOT match sandbox.example.com as base
+        // The regex requires {port}-{8hex}. prefix
+        assert!(parse_host("evil-sandbox.example.com").is_none());
+    }
+
+    #[test]
+    fn test_parse_host_with_port_prefix() {
+        // Valid: port prefix with hex ID
+        let result = parse_host("5173-a1b2c3d4.sandbox.example.com").unwrap();
+        assert_eq!(result.port, 5173);
+        assert_eq!(result.sandbox_id, "a1b2c3d4");
     }
 }

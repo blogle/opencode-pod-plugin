@@ -186,18 +186,9 @@ export async function sessionDeleted(input: PluginInput): Promise<void> {
     console.warn(`Failed to delete pod: ${error}`);
   }
 
-  // Delete PVC if workspace was persisted
-  if (config.persistWorkspace) {
-    const pvcName = `${record.podName}-workspace`;
-    try {
-      await coreApi.deleteNamespacedPersistentVolumeClaim({
-        name: pvcName,
-        namespace: config.namespace,
-      });
-    } catch (error) {
-      console.warn(`Failed to delete PVC: ${error}`);
-    }
-  }
+  // Note: PVC is NOT deleted when persistWorkspace is enabled.
+  // Orphaned PVCs should be cleaned up by a separate mechanism
+  // (e.g., Kubernetes Job, finalizer, or manual cleanup).
 
   // Remove from session store
   sessionStore.delete(sessionId);

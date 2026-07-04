@@ -14,14 +14,11 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow traffic from the router to sandbox pods
+    # Allow traffic from the router to sandbox pods (any port)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: opencode-k8s-sandbox-router
-      ports:
-        - protocol: TCP
-          port: 1  # Allow all ports
   egress:
     # Allow DNS resolution
     - to:
@@ -42,5 +39,17 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Allow SSH for git clone over SSH
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
         - protocol: TCP
           port: 22
+    # Allow intra-namespace traffic (router -> sandbox, sandbox -> sandbox)
+    - to:
+        - podSelector: {}

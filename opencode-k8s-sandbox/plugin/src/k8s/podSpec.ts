@@ -54,20 +54,25 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
   });
 
   // Init container for git clone (if repo URL is provided)
-  // Use pinned version instead of :latest for reproducibility
+  // Runs as root to chown /workspace to the main container's UID (1000)
   const initContainers: k8s.V1Container[] = repoUrl
     ? [
         {
           name: "git-clone",
           image: "alpine/git:2.45.2-r0",
           imagePullPolicy: "IfNotPresent",
-          command: ["git", "clone", "--depth=1", repoUrl, "/workspace"],
+          command: [
+            "sh",
+            "-c",
+            "git clone --depth=1 \"$REPO_URL\" /workspace && chown -R 1000:1000 /workspace",
+          ],
+          env: [{ name: "REPO_URL", value: repoUrl }],
           volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
           securityContext: {
-            runAsNonRoot: false, // git clone needs to write
+            runAsNonRoot: false,
             runAsUser: 0,
             allowPrivilegeEscalation: false,
-            readOnlyRootFilesystem: false, // needs to write to workspace
+            readOnlyRootFilesystem: false,
             capabilities: { drop: ["ALL"] },
           },
         },
@@ -125,6 +130,7 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
       ],
       volumes,
       securityContext: {
+        fsGroup: 1000,
         seccompProfile: {
           type: "RuntimeDefault",
         },

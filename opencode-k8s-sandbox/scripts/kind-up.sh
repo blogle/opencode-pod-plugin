@@ -53,10 +53,10 @@ kind load docker-image opencode-sandbox:latest --name "$CLUSTER_NAME"
 
 echo "Sandbox image loaded into kind"
 
-# Load alpine/git image for init container
+# Load alpine/git image for init container (pinned for reproducibility)
 echo "Loading alpine/git image for init container..."
-docker pull alpine/git:latest
-kind load docker-image alpine/git:latest --name "$CLUSTER_NAME"
+docker pull alpine/git:2.45.2-r0
+kind load docker-image alpine/git:2.45.2-r0 --name "$CLUSTER_NAME"
 
 echo "alpine/git image loaded into kind"
 

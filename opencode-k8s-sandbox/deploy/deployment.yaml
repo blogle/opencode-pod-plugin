@@ -47,6 +47,14 @@ spec:
                   fieldPath: metadata.namespace
             - name: ROUTER_LOG
               value: "info"
+            - name: ROUTER_BASE_DOMAIN
+              value: "opencode.example.com"
+            - name: ROUTER_MAX_CONNECTIONS
+              value: "1024"
+            - name: ROUTER_HEADER_TIMEOUT_MS
+              value: "10000"
+            - name: ROUTER_CONNECT_TIMEOUT_MS
+              value: "3000"
           resources:
             requests:
               cpu: 100m

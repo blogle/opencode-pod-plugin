@@ -16,13 +16,9 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
-        let base_domain = env::var("ROUTER_BASE_DOMAIN").ok().filter(|s| !s.is_empty());
-        if base_domain.is_none() {
-            tracing::warn!(
-                "ROUTER_BASE_DOMAIN not set - Host header domain validation is disabled. \
-                 This is insecure for production use. Set ROUTER_BASE_DOMAIN to enable validation."
-            );
-        }
+        let base_domain = env::var("ROUTER_BASE_DOMAIN")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         Self {
             proxy_addr: env::var("ROUTER_PROXY_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
