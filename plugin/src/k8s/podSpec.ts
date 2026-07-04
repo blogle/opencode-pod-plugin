@@ -53,6 +53,16 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
     emptyDir: { sizeLimit: "100Mi" },
   });
 
+  // ponytail: nixCache requires writable /nix/store + attic push/pull.
+  // No warmup job — pods write back directly. Accept cache pollution risk for now.
+  const nixCacheEnabled = !!config.nixCache;
+  if (nixCacheEnabled) {
+    volumes.push({
+      name: "attic-token",
+      secret: { secretName: config.nixCache!.tokenSecretName },
+    });
+  }
+
   // Init container for git clone (if repo URL is provided)
   // Runs as root to chown /workspace to the main container's UID (1000)
   const initContainers: k8s.V1Container[] = repoUrl
@@ -94,7 +104,25 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
           name: "sandbox",
           image: config.sandboxImage,
           imagePullPolicy: config.imagePullPolicy ?? "IfNotPresent",
-          command: ["sleep", "infinity"],
+          command: nixCacheEnabled
+            ? [
+                "sh",
+                "-c",
+                [
+                  // Write nix.conf with Attic as a substituter
+                  'mkdir -p ~/.config/nix',
+                  'cat > ~/.config/nix/nix.conf <<NIXEOF',
+                  'experimental-features = nix-command flakes',
+                  `substituters = https://cache.nixos.org ${config.nixCache!.endpoint}/${config.nixCache!.cache}`,
+                  `trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${config.nixCache!.cache}:${config.nixCache!.publicKey}`,
+                  'NIXEOF',
+                  // Login to Attic and start watching the store in background
+                  `attic login opencode "${config.nixCache!.endpoint}" "$ATTIC_TOKEN"`,
+                  `attic watch-store "opencode:${config.nixCache!.cache}" &`,
+                  'exec sleep infinity',
+                ].join("\n"),
+              ]
+            : ["sleep", "infinity"],
           resources: {
             requests: {
               cpu: config.resources.requests.cpu,
@@ -108,12 +136,15 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
           volumeMounts: [
             ...volumeMounts,
             { name: "tmp", mountPath: "/tmp" },
+            ...(nixCacheEnabled
+              ? [{ name: "attic-token", mountPath: "/var/run/secrets/attic", readOnly: true }]
+              : []),
           ],
           securityContext: {
             runAsNonRoot: true,
             runAsUser: 1000,
             runAsGroup: 1000,
-            readOnlyRootFilesystem: true,
+            readOnlyRootFilesystem: !nixCacheEnabled,
             allowPrivilegeEscalation: false,
             capabilities: { drop: ["ALL"] },
             seccompProfile: {
@@ -125,6 +156,23 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
               name: "TMPDIR",
               value: "/tmp",
             },
+            {
+              name: "HOME",
+              value: "/workspace",
+            },
+            ...(nixCacheEnabled
+              ? [
+                  {
+                    name: "ATTIC_TOKEN",
+                    valueFrom: {
+                      secretKeyRef: {
+                        name: config.nixCache!.tokenSecretName,
+                        key: config.nixCache!.tokenSecretKey,
+                      },
+                    },
+                  },
+                ]
+              : []),
           ],
         },
       ],

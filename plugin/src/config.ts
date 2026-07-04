@@ -36,6 +36,23 @@ const ConfigSchema = z.object({
   storageSize: z.string().default("1Gi").describe("PVC storage size when persistWorkspace is true"),
   idleTimeoutMinutes: z.number().default(60),
   podStartupTimeoutSeconds: z.number().default(30),
+  // ponytail: nixCache is optional; when set, pods get writable /nix + attic push/pull.
+  // No warmup job yet — every pod writes back directly. Upgrade path: add a warmup
+  // controller that pre-builds common dev shells into the cache.
+  nixCache: z
+    .object({
+      endpoint: z.string().describe("Attic server endpoint URL (e.g. https://attic.example.com)"),
+      cache: z.string().default("opencode").describe("Attic cache name"),
+      publicKey: z.string().describe("Attic cache public key (e.g. opencode:abc123=)"),
+      tokenSecretName: z
+        .string()
+        .describe("Kubernetes secret containing the Attic push token"),
+      tokenSecretKey: z
+        .string()
+        .default("attic-token")
+        .describe("Key within the secret containing the token value"),
+    })
+    .optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -83,6 +100,15 @@ export function loadConfig(pluginConfig: Record<string, unknown>): Config {
     idleTimeoutMinutes: pluginConfig.idleTimeoutMinutes as number | undefined,
     podStartupTimeoutSeconds:
       pluginConfig.podStartupTimeoutSeconds as number | undefined,
+    nixCache: pluginConfig.nixCache as
+      | {
+          endpoint: string;
+          cache?: string;
+          publicKey: string;
+          tokenSecretName: string;
+          tokenSecretKey?: string;
+        }
+      | undefined,
   };
 
   return ConfigSchema.parse(envConfig);

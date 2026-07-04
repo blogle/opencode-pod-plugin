@@ -28,6 +28,12 @@ RUN echo 'eval "$(direnv hook bash)"' >> /root/.bashrc && \
     mkdir -p /etc/bash_completion.d && \
     echo 'eval "$(direnv hook bash)"' > /etc/bash_completion.d/direnv.sh
 
+# Install attic client for Nix binary cache push/pull
+# ponytail: using a dedicated profile to avoid polluting the default nix profile;
+# if attic-client is missing from nixpkgs, switch to github:zhaofengli/attic#attic-client
+RUN nix profile install --profile /nix/var/nix/profiles/sandbox nixpkgs#attic-client
+ENV PATH="/nix/var/nix/profiles/sandbox/bin:${PATH}"
+
 # Create workspace directory (init container clones repo here)
 RUN mkdir -p /workspace
 

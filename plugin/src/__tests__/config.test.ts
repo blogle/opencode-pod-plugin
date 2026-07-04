@@ -39,6 +39,7 @@ describe("Config", () => {
     expect(config.idleTimeoutMinutes).toBe(60);
     expect(config.podStartupTimeoutSeconds).toBe(30);
     expect(config.repoBaseDir).toBe("repos");
+    expect(config.nixCache).toBeUndefined();
   });
 
   it("should allow env var overrides", () => {
@@ -57,6 +58,49 @@ describe("Config", () => {
     expect(config.namespace).toBe("env-namespace");
 
     delete process.env.SANDBOX_NAMESPACE;
+  });
+
+  it("should parse nixCache config", () => {
+    const pluginConfig = {
+      namespace: "test-namespace",
+      sandboxImage: "test-image",
+      repos: { "test-repo": "https://example.com/repo.git" },
+      baseDomain: "test.example.com",
+      nixCache: {
+        endpoint: "https://attic.example.com",
+        cache: "my-cache",
+        publicKey: "my-cache:abc123=",
+        tokenSecretName: "attic-creds",
+        tokenSecretKey: "token",
+      },
+    };
+
+    const config = loadConfig(pluginConfig);
+    expect(config.nixCache).toEqual({
+      endpoint: "https://attic.example.com",
+      cache: "my-cache",
+      publicKey: "my-cache:abc123=",
+      tokenSecretName: "attic-creds",
+      tokenSecretKey: "token",
+    });
+  });
+
+  it("should use nixCache defaults", () => {
+    const pluginConfig = {
+      namespace: "test-namespace",
+      sandboxImage: "test-image",
+      repos: { "test-repo": "https://example.com/repo.git" },
+      baseDomain: "test.example.com",
+      nixCache: {
+        endpoint: "https://attic.example.com",
+        publicKey: "my-cache:abc123=",
+        tokenSecretName: "attic-creds",
+      },
+    };
+
+    const config = loadConfig(pluginConfig);
+    expect(config.nixCache?.cache).toBe("opencode");
+    expect(config.nixCache?.tokenSecretKey).toBe("attic-token");
   });
 });
 
