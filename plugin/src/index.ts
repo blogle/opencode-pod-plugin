@@ -74,8 +74,10 @@ export const K8sSandboxPlugin = async (
   const config = loadConfig(options ?? {});
   const sessionStore = new SessionStore();
 
-  const shell = (strings: TemplateStringsArray, ...values: unknown[]) =>
-    $.raw(strings, ...values);
+  const shell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const fn = $.raw ?? ($ as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<string>);
+    return fn(strings, ...values);
+  };
 
   const repoMapping = await cloneRepos(config, worktree, shell);
 
@@ -143,6 +145,8 @@ export const K8sSandboxPlugin = async (
 
   return {
     event: async ({ event }: PluginEventEnvelope) => {
+      console.log("[plugin] event", event.type);
+
       if (event.type === "session.created") {
         const sessionID = getEventSessionID(event);
         if (!sessionID) {
@@ -421,3 +425,5 @@ export function createPlugin(pluginConfig: Record<string, unknown>) {
 export { Config } from "./config.js";
 export { SessionStore, SandboxRecord } from "./sessionStore.js";
 export { RepoMapping, findRepoForDirectory } from "./repos.js";
+
+export default K8sSandboxPlugin;
