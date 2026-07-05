@@ -36,20 +36,47 @@ export interface OpenCodeContext {
   worktree: string;
 }
 
+interface ToolContext {
+  sessionID: string;
+  messageID?: string;
+  agent?: string;
+  abort?: AbortSignal;
+  directory: string;
+  worktree: string;
+}
+
+interface PluginEventEnvelope {
+  event: {
+    type: string;
+    sessionID?: string;
+    sessionId?: string;
+    properties?: {
+      sessionID?: string;
+      sessionId?: string;
+      info?: {
+        sessionID?: string;
+        sessionId?: string;
+      };
+    };
+  };
+}
+
 /**
- * Standard opencode plugin entry point.
- * Receives context from the opencode runtime and returns hooks/tools.
+ * Opencode plugin entry point.
+ * Returns hooks and tools at top level per current opencode plugin API.
+ * Tools with the same name as built-in tools take precedence.
  */
-export const K8sSandboxPlugin = async (ctx: OpenCodeContext) => {
+export const K8sSandboxPlugin = async (
+  ctx: OpenCodeContext,
+  options?: Record<string, unknown>
+) => {
   const { project, client, $, directory, worktree } = ctx;
-  const config = loadConfig(project.config);
+  const config = loadConfig(options ?? {});
   const sessionStore = new SessionStore();
 
-  // Wrap Bun shell $ for use with cloneRepos
   const shell = (strings: TemplateStringsArray, ...values: unknown[]) =>
     $.raw(strings, ...values);
 
-  // Clone repos on init — these become selectable projects in OpenCode UI
   const repoMapping = await cloneRepos(config, worktree, shell);
 
   const pluginCtx: PluginContext = {
@@ -57,335 +84,333 @@ export const K8sSandboxPlugin = async (ctx: OpenCodeContext) => {
     sessionStore,
     repoMapping,
   };
+  const sandboxCreation = new Map<string, Promise<void>>();
 
-  // Reconcile existing pods on startup to handle plugin restarts
   await reconcileExistingPods(config, sessionStore);
 
   const idleSweepInterval = setupIdleSweep(config, sessionStore);
 
+  function getRecord(sessionID: string): SandboxRecord {
+    const record = sessionStore.get(sessionID);
+    if (!record) {
+      throw new Error("No sandbox found for this session. Create a session first.");
+    }
+    return record;
+  }
+
+  function getEventSessionID(event: PluginEventEnvelope["event"]): string | undefined {
+    return (
+      event.sessionID ||
+      event.sessionId ||
+      event.properties?.sessionID ||
+      event.properties?.sessionId ||
+      event.properties?.info?.sessionID ||
+      event.properties?.info?.sessionId
+    );
+  }
+
+  async function ensureSandbox(sessionID: string): Promise<void> {
+    if (sessionStore.has(sessionID)) {
+      return;
+    }
+
+    const existing = sandboxCreation.get(sessionID);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const creation = (async () => {
+      const pathResponse = await client.path.get();
+      const currentDir = pathResponse.data?.path || directory;
+      const repo = findRepoForDirectory(currentDir, repoMapping);
+
+      await sessionCreated({
+        sessionId: sessionID,
+        ...pluginCtx,
+        repoUrl: repo?.url,
+      });
+    })();
+
+    sandboxCreation.set(sessionID, creation);
+
+    try {
+      await creation;
+    } finally {
+      sandboxCreation.delete(sessionID);
+    }
+  }
+
   return {
-    hooks: {
-      "session.created": async (input: { sessionId: string }) => {
-        // Detect which project the user selected by checking current directory
-        const pathResponse = await client.path.get();
-        const currentDir = pathResponse.data?.path || directory;
+    event: async ({ event }: PluginEventEnvelope) => {
+      if (event.type === "session.created") {
+        const sessionID = getEventSessionID(event);
+        if (!sessionID) {
+          throw new Error("session.created event missing sessionID");
+        }
+        await ensureSandbox(sessionID);
+        return;
+      }
 
-        // Find the repo for this directory
-        const repo = findRepoForDirectory(currentDir, repoMapping);
-
-        await sessionCreated({
-          ...input,
+      if (event.type === "session.deleted") {
+        const sessionID = getEventSessionID(event);
+        if (!sessionID) {
+          return;
+        }
+        await sessionDeleted({
+          sessionId: sessionID,
           ...pluginCtx,
-          repoUrl: repo?.url,
         });
-      },
-      "session.deleted": async (input: { sessionId: string }) => {
-        await sessionDeleted({ ...input, ...pluginCtx });
-      },
-      "tool.execute.before": (input: { sessionId: string }) => {
-        sessionStore.updateLastActive(input.sessionId);
-      },
-      "system.prompt.transform": getSystemPromptTransform(config, sessionStore),
+        return;
+      }
     },
-    tools: {
-      bash: async (input: { sessionId: string; command: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return bashOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.command
-        );
+
+    "tool.execute.before": async (
+      input: { tool: string; sessionID: string },
+      output: { args: Record<string, unknown> }
+    ) => {
+      sessionStore.updateLastActive(input.sessionID);
+    },
+
+    "experimental.chat.system.transform": getSystemPromptTransform(config, sessionStore),
+
+    // --- Tools (top level, not nested under "tools") ---
+
+    tool: {
+      bash: {
+        description: "Execute a shell command inside the sandbox pod",
+        args: {
+          command: { type: "string", description: "The command to execute" },
+        },
+        execute: async (args: { command: string }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return bashOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.command
+          );
+        },
       },
-      read: async (input: { sessionId: string; path: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return readFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path
-        );
+
+      read: {
+        description: "Read a file from the sandbox pod",
+        args: {
+          filePath: { type: "string", description: "Absolute path to the file" },
+        },
+        execute: async (args: { filePath: string }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return readFile(
+            { podName: record.podName, namespace: config.namespace },
+            args.filePath
+          );
+        },
       },
-      write: async (input: {
-        sessionId: string;
-        path: string;
-        content: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await writeFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path,
-          input.content
-        );
+
+      write: {
+        description: "Write content to a file in the sandbox pod",
+        args: {
+          filePath: { type: "string", description: "Absolute path to the file" },
+          content: { type: "string", description: "Content to write" },
+        },
+        execute: async (
+          args: { filePath: string; content: string },
+          toolCtx: ToolContext
+        ) => {
+          const record = getRecord(toolCtx.sessionID);
+          await writeFile(
+            { podName: record.podName, namespace: config.namespace },
+            args.filePath,
+            args.content
+          );
+        },
       },
-      edit: async (input: {
-        sessionId: string;
-        path: string;
-        oldString: string;
-        newString: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await editFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path,
-          input.oldString,
-          input.newString
-        );
+
+      edit: {
+        description: "Edit a file in the sandbox pod using string replacement",
+        args: {
+          filePath: { type: "string", description: "Absolute path to the file" },
+          oldString: { type: "string", description: "Exact string to replace" },
+          newString: { type: "string", description: "Replacement string" },
+        },
+        execute: async (
+          args: { filePath: string; oldString: string; newString: string },
+          toolCtx: ToolContext
+        ) => {
+          const record = getRecord(toolCtx.sessionID);
+          await editFile(
+            { podName: record.podName, namespace: config.namespace },
+            args.filePath,
+            args.oldString,
+            args.newString
+          );
+        },
       },
-      list: async (input: { sessionId: string; path: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return lsOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.path
-        );
+
+      list: {
+        description: "List files in a directory on the sandbox pod",
+        args: {
+          path: { type: "string", description: "Directory path" },
+        },
+        execute: async (args: { path: string }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return lsOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.path
+          );
+        },
       },
-      glob: async (input: { sessionId: string; pattern: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return globOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.pattern
-        );
+
+      glob: {
+        description: "Find files by pattern on the sandbox pod",
+        args: {
+          pattern: { type: "string", description: "Glob pattern" },
+        },
+        execute: async (args: { pattern: string }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return globOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.pattern
+          );
+        },
       },
-      grep: async (input: {
-        sessionId: string;
-        pattern: string;
-        path: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return grepOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.pattern,
-          input.path
-        );
+
+      grep: {
+        description: "Search file contents on the sandbox pod",
+        args: {
+          pattern: { type: "string", description: "Regex pattern" },
+          path: { type: "string", description: "Directory to search in" },
+        },
+        execute: async (
+          args: { pattern: string; path: string },
+          toolCtx: ToolContext
+        ) => {
+          const record = getRecord(toolCtx.sessionID);
+          return grepOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.pattern,
+            args.path
+          );
+        },
       },
-      "preview-link": async (input: {
-        sessionId: string;
-        port: number;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return previewLinkOverride(
-          record.sandboxId,
-          config.baseDomain,
-          input.port
-        );
+
+      "preview-link": {
+        description: "Get a URL to access a service running in the sandbox",
+        args: {
+          port: { type: "number", description: "Port number" },
+        },
+        execute: async (args: { port: number }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return previewLinkOverride(
+            record.sandboxId,
+            config.baseDomain,
+            args.port
+          );
+        },
       },
-      multiedit: async (input: {
-        sessionId: string;
-        operations: Array<{
-          path: string;
-          oldString: string;
-          newString: string;
-        }>;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await multieditOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.operations
-        );
+
+      multiedit: {
+        description: "Apply multiple edits to files in the sandbox pod",
+        args: {
+          operations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                oldString: { type: "string" },
+                newString: { type: "string" },
+              },
+            },
+            description: "List of edit operations",
+          },
+        },
+        execute: async (
+          args: {
+            operations: Array<{
+              path: string;
+              oldString: string;
+              newString: string;
+            }>;
+          },
+          toolCtx: ToolContext
+        ) => {
+          const record = getRecord(toolCtx.sessionID);
+          await multieditOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.operations
+          );
+        },
       },
-      apply_patch: async (input: {
-        sessionId: string;
-        patch: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return applyPatchOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.patch
-        );
+
+      apply_patch: {
+        description: "Apply a patch to files in the sandbox pod",
+        args: {
+          patchText: { type: "string", description: "Patch content" },
+        },
+        execute: async (args: { patchText: string }, toolCtx: ToolContext) => {
+          const record = getRecord(toolCtx.sessionID);
+          return applyPatchOverride(
+            { podName: record.podName, namespace: config.namespace },
+            args.patchText
+          );
+        },
       },
     },
+
+    // --- Cleanup ---
+
     cleanup: () => {
       clearInterval(idleSweepInterval);
     },
+
     sessionStore,
     repoMapping,
   };
 };
 
-// Legacy factory function for backward compatibility in tests
+// Legacy factory for backward compat with tests
 export function createPlugin(pluginConfig: Record<string, unknown>) {
   const config = loadConfig(pluginConfig);
   const sessionStore = new SessionStore();
   const idleSweepInterval = setupIdleSweep(config, sessionStore);
 
-  const pluginCtx: PluginContext = {
-    config,
-    sessionStore,
-    repoMapping: new Map(),
-  };
-
   return {
-    hooks: {
-      "session.created": async (input: { sessionId: string }) => {
-        await sessionCreated({ ...input, ...pluginCtx });
-      },
-      "session.deleted": async (input: { sessionId: string }) => {
-        await sessionDeleted({ ...input, ...pluginCtx });
-      },
-      "tool.execute.before": (input: { sessionId: string }) => {
-        sessionStore.updateLastActive(input.sessionId);
-      },
-      "system.prompt.transform": getSystemPromptTransform(config, sessionStore),
+    event: async ({ event }: PluginEventEnvelope) => {
+      const sessionID =
+        event.sessionID ||
+        event.sessionId ||
+        event.properties?.sessionID ||
+        event.properties?.sessionId ||
+        event.properties?.info?.sessionID ||
+        event.properties?.info?.sessionId;
+
+      if (!sessionID) {
+        return;
+      }
+
+      if (event.type === "session.created") {
+        await sessionCreated({
+          sessionId: sessionID,
+          config,
+          sessionStore,
+        });
+        return;
+      }
+
+      if (event.type === "session.deleted") {
+        await sessionDeleted({
+          sessionId: sessionID,
+          config,
+          sessionStore,
+        });
+      }
     },
-    tools: {
-      bash: async (input: { sessionId: string; command: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return bashOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.command
-        );
-      },
-      read: async (input: { sessionId: string; path: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return readFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path
-        );
-      },
-      write: async (input: {
-        sessionId: string;
-        path: string;
-        content: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await writeFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path,
-          input.content
-        );
-      },
-      edit: async (input: {
-        sessionId: string;
-        path: string;
-        oldString: string;
-        newString: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await editFile(
-          { podName: record.podName, namespace: config.namespace },
-          input.path,
-          input.oldString,
-          input.newString
-        );
-      },
-      list: async (input: { sessionId: string; path: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return lsOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.path
-        );
-      },
-      glob: async (input: { sessionId: string; pattern: string }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return globOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.pattern
-        );
-      },
-      grep: async (input: {
-        sessionId: string;
-        pattern: string;
-        path: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return grepOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.pattern,
-          input.path
-        );
-      },
-      "preview-link": async (input: {
-        sessionId: string;
-        port: number;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return previewLinkOverride(
-          record.sandboxId,
-          config.baseDomain,
-          input.port
-        );
-      },
-      multiedit: async (input: {
-        sessionId: string;
-        operations: Array<{
-          path: string;
-          oldString: string;
-          newString: string;
-        }>;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        await multieditOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.operations
-        );
-      },
-      apply_patch: async (input: {
-        sessionId: string;
-        patch: string;
-      }) => {
-        const record = sessionStore.get(input.sessionId);
-        if (!record) {
-          throw new Error("No sandbox found for this session");
-        }
-        return applyPatchOverride(
-          { podName: record.podName, namespace: config.namespace },
-          input.patch
-        );
-      },
+    "tool.execute.before": async (
+      input: { tool: string; sessionID: string },
+      output: { args: Record<string, unknown> }
+    ) => {
+      sessionStore.updateLastActive(input.sessionID);
     },
+    "experimental.chat.system.transform": getSystemPromptTransform(config, sessionStore),
     cleanup: () => {
       clearInterval(idleSweepInterval);
     },

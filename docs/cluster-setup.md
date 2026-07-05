@@ -262,3 +262,55 @@ kubectl get pvc -n opencode-sandbox
    ```bash
    curl -H "Host: 80-abcd1234.opencode.example.com" http://router-service:8080
    ```
+
+## Troubleshooting
+
+### Verify plugin loads
+
+Check that opencode discovers and loads the plugin at startup:
+
+```bash
+kubectl -n opencode logs deploy/opencode --all-containers --prefix | grep -i plugin
+```
+
+The plugin is loaded from `~/.config/opencode/plugins/k8s-sandbox.js` via auto-discovery. The init container rebuilds this file on every pod start from the git repo.
+
+Sandbox provisioning is driven by the plugin `event` subscriber. The plugin listens for `session.created` and `session.deleted` events and creates or tears down the sandbox from those events.
+
+### Verify plugin registers tools
+
+With debug logging enabled (`opencode serve --print-logs --log-level DEBUG`), check for plugin initialization errors:
+
+```bash
+kubectl -n opencode logs deploy/opencode -c opencode --tail=100
+```
+
+### Verify sandbox pods are created
+
+After creating a session, check for sandbox pods:
+
+```bash
+kubectl -n opencode get pods -l app.kubernetes.io/managed-by=opencode-k8s-sandbox
+```
+
+If no pods appear, check that:
+1. The plugin loaded without errors (see above)
+2. The service account has RBAC permissions to create pods
+3. The `SANDBOX_NAMESPACE` env var matches the target namespace
+
+### Verify RBAC
+
+```bash
+kubectl -n opencode auth can-i create pods \
+  --as system:serviceaccount:opencode:opencode-k8s-sandbox-plugin
+kubectl -n opencode auth can-i create pods/exec \
+  --as system:serviceaccount:opencode:opencode-k8s-sandbox-plugin
+```
+
+### Restart opencode to pick up plugin changes
+
+The plugin is loaded at startup. After any plugin code change, restart the deployment:
+
+```bash
+kubectl -n opencode rollout restart deploy/opencode
+```
