@@ -174,6 +174,7 @@ export const K8sSandboxPlugin = async (
       output: { args: Record<string, unknown> }
     ) => {
       sessionStore.updateLastActive(input.sessionID);
+      await ensureSandbox(input.sessionID);
     },
 
     "experimental.chat.system.transform": getSystemPromptTransform(config, sessionStore),
