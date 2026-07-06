@@ -1,3 +1,4 @@
+import { tool } from "@opencode-ai/plugin";
 import { loadConfig, Config } from "./config.js";
 import { SessionStore, SandboxRecord } from "./sessionStore.js";
 import {
@@ -32,15 +33,6 @@ export interface OpenCodeContext {
     app: { log: (entry: { body: { service: string; level: string; message: string } }) => Promise<void> };
   };
   $: { raw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<string> };
-  directory: string;
-  worktree: string;
-}
-
-interface ToolContext {
-  sessionID: string;
-  messageID?: string;
-  agent?: string;
-  abort?: AbortSignal;
   directory: string;
   worktree: string;
 }
@@ -111,6 +103,17 @@ export const K8sSandboxPlugin = async (
     );
   }
 
+  function extractSessionID(event: { type: string; properties?: Record<string, unknown> }): string | undefined {
+    const props = event.properties as Record<string, unknown> | undefined;
+    const info = props?.info as Record<string, unknown> | undefined;
+    return (
+      (props?.sessionID as string) ||
+      (props?.sessionId as string) ||
+      (info?.sessionID as string) ||
+      (info?.sessionId as string)
+    );
+  }
+
   async function ensureSandbox(sessionID: string): Promise<void> {
     if (sessionStore.has(sessionID)) {
       return;
@@ -143,12 +146,18 @@ export const K8sSandboxPlugin = async (
     }
   }
 
+  function k8sCtx(sessionID: string) {
+    const record = getRecord(sessionID);
+    return { podName: record.podName, namespace: config.namespace };
+  }
+
   return {
-    event: async ({ event }: PluginEventEnvelope) => {
+    event: async (input: { event: { type: string; properties?: Record<string, unknown> } }) => {
+      const event = input.event;
       console.log("[plugin] event", event.type);
 
       if (event.type === "session.created") {
-        const sessionID = getEventSessionID(event);
+        const sessionID = extractSessionID(event);
         if (!sessionID) {
           throw new Error("session.created event missing sessionID");
         }
@@ -157,7 +166,7 @@ export const K8sSandboxPlugin = async (
       }
 
       if (event.type === "session.deleted") {
-        const sessionID = getEventSessionID(event);
+        const sessionID = extractSessionID(event);
         if (!sessionID) {
           return;
         }
@@ -170,7 +179,7 @@ export const K8sSandboxPlugin = async (
     },
 
     "tool.execute.before": async (
-      input: { tool: string; sessionID: string },
+      input: { tool: string; sessionID: string; callID: string },
       output: { args: Record<string, unknown> }
     ) => {
       sessionStore.updateLastActive(input.sessionID);
@@ -182,183 +191,154 @@ export const K8sSandboxPlugin = async (
     // --- Tools (top level, not nested under "tools") ---
 
     tool: {
-      bash: {
+      bash: tool({
         description: "Execute a shell command inside the sandbox pod",
         args: {
-          command: { type: "string", description: "The command to execute" },
+          command: tool.schema.string().describe("The command to execute"),
         },
-        execute: async (args: { command: string }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
-          return bashOverride(
-            { podName: record.podName, namespace: config.namespace },
-            args.command
-          );
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          return bashOverride(k8sCtx(context.sessionID), args.command);
         },
-      },
+      }),
 
-      read: {
+      read: tool({
         description: "Read a file from the sandbox pod",
         args: {
-          filePath: { type: "string", description: "Absolute path to the file" },
+          filePath: tool.schema.string().describe("Path to the file"),
         },
-        execute: async (args: { filePath: string }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
-          return readFile(
-            { podName: record.podName, namespace: config.namespace },
-            args.filePath
-          );
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          return readFile(k8sCtx(context.sessionID), args.filePath);
         },
-      },
+      }),
 
-      write: {
+      write: tool({
         description: "Write content to a file in the sandbox pod",
         args: {
-          filePath: { type: "string", description: "Absolute path to the file" },
-          content: { type: "string", description: "Content to write" },
+          filePath: tool.schema.string().describe("Path to the file"),
+          content: tool.schema.string().describe("Content to write"),
         },
-        execute: async (
-          args: { filePath: string; content: string },
-          toolCtx: ToolContext
-        ) => {
-          const record = getRecord(toolCtx.sessionID);
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
           await writeFile(
-            { podName: record.podName, namespace: config.namespace },
+            k8sCtx(context.sessionID),
             args.filePath,
             args.content
           );
+          return `Wrote ${args.content.length} bytes to ${args.filePath}`;
         },
-      },
+      }),
 
-      edit: {
+      edit: tool({
         description: "Edit a file in the sandbox pod using string replacement",
         args: {
-          filePath: { type: "string", description: "Absolute path to the file" },
-          oldString: { type: "string", description: "Exact string to replace" },
-          newString: { type: "string", description: "Replacement string" },
+          filePath: tool.schema.string().describe("Path to the file"),
+          oldString: tool.schema.string().describe("Exact string to replace"),
+          newString: tool.schema.string().describe("Replacement string"),
         },
-        execute: async (
-          args: { filePath: string; oldString: string; newString: string },
-          toolCtx: ToolContext
-        ) => {
-          const record = getRecord(toolCtx.sessionID);
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
           await editFile(
-            { podName: record.podName, namespace: config.namespace },
+            k8sCtx(context.sessionID),
             args.filePath,
             args.oldString,
             args.newString
           );
+          return `Edited ${args.filePath}`;
         },
-      },
+      }),
 
-      list: {
+      list: tool({
         description: "List files in a directory on the sandbox pod",
         args: {
-          path: { type: "string", description: "Directory path" },
+          path: tool.schema.string().describe("Directory path"),
         },
-        execute: async (args: { path: string }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
-          return lsOverride(
-            { podName: record.podName, namespace: config.namespace },
-            args.path
-          );
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          return lsOverride(k8sCtx(context.sessionID), args.path);
         },
-      },
+      }),
 
-      glob: {
-        description: "Find files by pattern on the sandbox pod",
+      glob: tool({
+        description: "Find files by glob pattern on the sandbox pod",
         args: {
-          pattern: { type: "string", description: "Glob pattern" },
+          pattern: tool.schema.string().describe("Glob pattern (e.g. **/*.ts)"),
         },
-        execute: async (args: { pattern: string }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
-          return globOverride(
-            { podName: record.podName, namespace: config.namespace },
-            args.pattern
-          );
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          return globOverride(k8sCtx(context.sessionID), args.pattern);
         },
-      },
+      }),
 
-      grep: {
-        description: "Search file contents on the sandbox pod",
+      grep: tool({
+        description: "Search file contents using regex on the sandbox pod",
         args: {
-          pattern: { type: "string", description: "Regex pattern" },
-          path: { type: "string", description: "Directory to search in" },
+          pattern: tool.schema.string().describe("Regex pattern to search for"),
+          path: tool.schema.string().describe("Directory to search in"),
+          include: tool.schema.string().optional().describe("File pattern to include (e.g. *.ts)"),
         },
-        execute: async (
-          args: { pattern: string; path: string },
-          toolCtx: ToolContext
-        ) => {
-          const record = getRecord(toolCtx.sessionID);
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
           return grepOverride(
-            { podName: record.podName, namespace: config.namespace },
+            k8sCtx(context.sessionID),
             args.pattern,
-            args.path
+            args.path,
+            args.include
           );
         },
-      },
+      }),
 
-      "preview-link": {
+      "preview-link": tool({
         description: "Get a URL to access a service running in the sandbox",
         args: {
-          port: { type: "number", description: "Port number" },
+          port: tool.schema.number().describe("Port number"),
         },
-        execute: async (args: { port: number }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          const record = getRecord(context.sessionID);
           return previewLinkOverride(
             record.sandboxId,
             config.baseDomain,
             args.port
           );
         },
-      },
+      }),
 
-      multiedit: {
+      multiedit: tool({
         description: "Apply multiple edits to files in the sandbox pod",
         args: {
-          operations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                path: { type: "string" },
-                oldString: { type: "string" },
-                newString: { type: "string" },
-              },
-            },
-            description: "List of edit operations",
-          },
+          operations: tool.schema
+            .array(
+              tool.schema.object({
+                path: tool.schema.string(),
+                oldString: tool.schema.string(),
+                newString: tool.schema.string(),
+              })
+            )
+            .describe("List of edit operations"),
         },
-        execute: async (
-          args: {
-            operations: Array<{
-              path: string;
-              oldString: string;
-              newString: string;
-            }>;
-          },
-          toolCtx: ToolContext
-        ) => {
-          const record = getRecord(toolCtx.sessionID);
-          await multieditOverride(
-            { podName: record.podName, namespace: config.namespace },
-            args.operations
-          );
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
+          await multieditOverride(k8sCtx(context.sessionID), args.operations);
+          return `Applied ${args.operations.length} edits`;
         },
-      },
+      }),
 
-      apply_patch: {
-        description: "Apply a patch to files in the sandbox pod",
+      apply_patch: tool({
+        description:
+          "Apply a patch to files in the sandbox pod using OpenCode's marker format",
         args: {
-          patchText: { type: "string", description: "Patch content" },
+          patchText: tool.schema.string().describe("Patch content in OpenCode marker format"),
         },
-        execute: async (args: { patchText: string }, toolCtx: ToolContext) => {
-          const record = getRecord(toolCtx.sessionID);
+        async execute(args, context) {
+          await ensureSandbox(context.sessionID);
           return applyPatchOverride(
-            { podName: record.podName, namespace: config.namespace },
+            k8sCtx(context.sessionID),
             args.patchText
           );
         },
-      },
+      }),
     },
 
     // --- Cleanup ---
@@ -410,7 +390,7 @@ export function createPlugin(pluginConfig: Record<string, unknown>) {
       }
     },
     "tool.execute.before": async (
-      input: { tool: string; sessionID: string },
+      input: { tool: string; sessionID: string; callID: string },
       output: { args: Record<string, unknown> }
     ) => {
       sessionStore.updateLastActive(input.sessionID);

@@ -16,7 +16,8 @@
   "license": "MIT",
   "dependencies": {
     "@kubernetes/client-node": "^1.0.0",
-    "zod": "^3.22.0"
+    "@opencode-ai/plugin": "latest",
+    "zod": "4.1.8"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

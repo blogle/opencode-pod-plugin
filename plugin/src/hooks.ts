@@ -95,9 +95,8 @@ export async function reconcileExistingPods(
         continue;
       }
 
-      // Adopt this orphaned pod - it's running but not tracked
-      // We can't recover the sessionId, so we use a synthetic one
-      const recoveredSessionId = `recovered-${Date.now()}-${sandboxId}`;
+      // Adopt this orphaned pod - prefer the original sessionId from annotation
+      const recoveredSessionId = sessionId ?? `recovered-${Date.now()}-${sandboxId}`;
       console.log(
         `Adopting orphaned pod: ${podName} (sandbox: ${sandboxId})`
       );
@@ -216,10 +215,13 @@ export function getSystemPromptTransform(
   config: Config,
   sessionStore: SessionStore
 ) {
-  return (basePrompt: string, context: { sessionId: string }): string => {
-    const record = sessionStore.get(context.sessionId);
+  return async (
+    input: { sessionID?: string; model?: unknown },
+    output: { system: string[] }
+  ): Promise<void> => {
+    const record = input.sessionID ? sessionStore.get(input.sessionID) : undefined;
     if (!record) {
-      return basePrompt;
+      return;
     }
 
     const sandboxInstructions = `
@@ -231,6 +233,6 @@ When you start a development server that should be accessible via browser, use t
 Example: preview-link(port=5173) returns https://5173-${record.sandboxId}.${config.baseDomain}
 `.trim();
 
-    return `${basePrompt}\n\n${sandboxInstructions}`;
+    output.system.push(sandboxInstructions);
   };
 }

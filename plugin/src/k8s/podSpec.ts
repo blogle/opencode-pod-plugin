@@ -164,6 +164,7 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
               type: "RuntimeDefault",
             },
           },
+          workingDir: "/workspace",
           env: [
             {
               name: "TMPDIR",

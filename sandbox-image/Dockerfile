@@ -9,7 +9,8 @@ RUN apt-get update && \
       direnv \
       ca-certificates \
       openssh-client \
-      patch && \
+      patch \
+      ripgrep && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Determinate Nix (pinned version for reproducibility)

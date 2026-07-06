@@ -1,4 +1,5 @@
 import { execInPod } from "../k8s/exec.js";
+import { sandboxPath } from "./paths.js";
 
 export interface FileOpsContext {
   podName: string;
@@ -9,11 +10,10 @@ export async function readFile(
   ctx: FileOpsContext,
   path: string
 ): Promise<string> {
-  // Use array form to avoid shell interpretation of path
   const result = await execInPod(ctx.podName, ctx.namespace, [
     "/bin/cat",
     "--",
-    path,
+    sandboxPath(path),
   ]);
 
   if (result.exitCode !== 0) {
@@ -28,12 +28,11 @@ export async function writeFile(
   path: string,
   content: string
 ): Promise<void> {
-  // Use base64 encoding for binary safety, pass via stdin to avoid shell injection
   const encoded = Buffer.from(content).toString("base64");
   const result = await execInPod(
     ctx.podName,
     ctx.namespace,
-    ["/bin/bash", "-c", "base64 -d > \"$1\"", "--", path],
+    ["/bin/bash", "-c", "base64 -d > \"$1\"", "--", sandboxPath(path)],
     encoded
   );
 
@@ -48,7 +47,6 @@ export async function editFile(
   oldString: string,
   newString: string
 ): Promise<void> {
-  // Read the file, perform the replacement, write it back
   const content = await readFile(ctx, path);
 
   if (!content.includes(oldString)) {

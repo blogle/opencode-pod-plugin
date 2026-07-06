@@ -1,4 +1,7 @@
 import { execInPod } from "../k8s/exec.js";
+import { sandboxPath } from "./paths.js";
+import { parsePatch, applyHunks } from "./patchParser.js";
+import { readFile, writeFile } from "./fileOps.js";
 
 export interface ToolContext {
   podName: string;
@@ -13,7 +16,7 @@ export async function lsOverride(
     "/bin/ls",
     "-la",
     "--",
-    path,
+    sandboxPath(path),
   ]);
 
   if (result.exitCode !== 0) {
@@ -27,11 +30,10 @@ export async function globOverride(
   ctx: ToolContext,
   pattern: string
 ): Promise<string> {
-  // Use find with argument array to avoid shell interpretation
   const result = await execInPod(ctx.podName, ctx.namespace, [
     "/bin/bash",
     "-c",
-    "find . -name \"$1\" -type f 2>/dev/null | head -100",
+    "cd /workspace && rg --files -g \"$1\" 2>/dev/null | head -200",
     "--",
     pattern,
   ]);
@@ -46,15 +48,19 @@ export async function globOverride(
 export async function grepOverride(
   ctx: ToolContext,
   pattern: string,
-  path: string
+  path: string,
+  include?: string
 ): Promise<string> {
+  const searchPath = sandboxPath(path);
+  const includeArg = include ? `-g "${include}"` : "";
+
   const result = await execInPod(ctx.podName, ctx.namespace, [
-    "/bin/grep",
-    "-r",
-    "--include=*",
+    "/bin/bash",
+    "-c",
+    `rg --no-heading -n ${includeArg} "$1" "$2" 2>/dev/null | head -200`,
     "--",
     pattern,
-    path,
+    searchPath,
   ]);
 
   // grep returns exit code 1 when no matches found, which is not an error
@@ -83,57 +89,74 @@ export async function multieditOverride(
   ctx: ToolContext,
   operations: EditOperation[]
 ): Promise<void> {
-  // Read the file once, apply all replacements in memory, write once
-  // This is safer than shell-based sed/perl and handles all edge cases
   for (const op of operations) {
-    // Read the file
-    const readResult = await execInPod(ctx.podName, ctx.namespace, [
-      "/bin/cat",
-      "--",
-      op.path,
-    ]);
-
-    if (readResult.exitCode !== 0) {
-      throw new Error(`Failed to read ${op.path}: ${readResult.stderr}`);
-    }
-
-    const content = readResult.stdout;
+    const filePath = sandboxPath(op.path);
+    const content = await readFile(ctx, op.path);
     if (!content.includes(op.oldString)) {
       throw new Error(`String not found in ${op.path}`);
     }
-
-    // Replace in memory
     const updatedContent = content.replace(op.oldString, op.newString);
-
-    // Write back using stdin
-    const writeResult = await execInPod(
-      ctx.podName,
-      ctx.namespace,
-      ["/bin/bash", "-c", "cat > \"$1\"", "--", op.path],
-      updatedContent
-    );
-
-    if (writeResult.exitCode !== 0) {
-      throw new Error(`Failed to write ${op.path}: ${writeResult.stderr}`);
-    }
+    await writeFile(ctx, op.path, updatedContent);
   }
 }
 
+/**
+ * Apply an OpenCode marker-format patch inside the sandbox.
+ * Parses the *** marker format, then applies each hunk via file operations.
+ */
 export async function applyPatchOverride(
   ctx: ToolContext,
   patchContent: string
 ): Promise<string> {
-  // Use stdin to pass patch content safely, avoiding shell injection
-  const result = await execInPod(
-    ctx.podName,
-    ctx.namespace,
-    ["/usr/bin/patch", "-p1"],
-    patchContent
-  );
+  const { hunks } = parsePatch(patchContent);
+  const results: string[] = [];
 
-  if (result.exitCode !== 0) {
-    throw new Error(`apply_patch failed with exit code ${result.exitCode}: ${result.stderr}`);
+  for (const hunk of hunks) {
+    switch (hunk.type) {
+      case "add": {
+        await writeFile(ctx, hunk.path, hunk.contents ?? "");
+        results.push(`Added: ${hunk.path}`);
+        break;
+      }
+      case "delete": {
+        const deleteResult = await execInPod(ctx.podName, ctx.namespace, [
+          "/bin/rm",
+          "-f",
+          "--",
+          sandboxPath(hunk.path),
+        ]);
+        if (deleteResult.exitCode !== 0) {
+          throw new Error(`Failed to delete ${hunk.path}: ${deleteResult.stderr}`);
+        }
+        results.push(`Deleted: ${hunk.path}`);
+        break;
+      }
+      case "update": {
+        const existing = await readFile(ctx, hunk.path);
+        const updated = applyHunks(existing, [hunk]);
+        await writeFile(ctx, hunk.path, updated);
+
+        // Handle Move to
+        if (hunk.movePath) {
+          const moveResult = await execInPod(ctx.podName, ctx.namespace, [
+            "/bin/mv",
+            "--",
+            sandboxPath(hunk.path),
+            sandboxPath(hunk.movePath),
+          ]);
+          if (moveResult.exitCode !== 0) {
+            throw new Error(
+              `Failed to move ${hunk.path} to ${hunk.movePath}: ${moveResult.stderr}`
+            );
+          }
+          results.push(`Moved: ${hunk.path} -> ${hunk.movePath}`);
+        } else {
+          results.push(`Updated: ${hunk.path}`);
+        }
+        break;
+      }
+    }
   }
 
-  return result.stdout;
+  return results.join("\n");
 }

@@ -22,15 +22,15 @@ const ConfigSchema = z.object({
   baseDomain: z.string().describe("Base domain for sandbox URLs"),
   resources: z
     .object({
-      requests: ResourceRequirementsSchema.default({}),
+      requests: ResourceRequirementsSchema.default({ cpu: "250m", memory: "256Mi" }),
       limits: z
         .object({
           cpu: z.string().default("2"),
           memory: z.string().default("2Gi"),
         })
-        .default({}),
+        .default({ cpu: "2", memory: "2Gi" }),
     })
-    .default({}),
+    .default({ requests: { cpu: "250m", memory: "256Mi" }, limits: { cpu: "2", memory: "2Gi" } }),
   persistWorkspace: z.boolean().default(false),
   storageClassName: z.string().optional(),
   storageSize: z.string().default("1Gi").describe("PVC storage size when persistWorkspace is true"),
