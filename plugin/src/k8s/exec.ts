@@ -7,6 +7,32 @@ export interface ExecResult {
   exitCode: number;
 }
 
+/**
+ * Extract a human-readable message from any thrown value.
+ * Handles Error, ErrorEvent, and plain objects without useful toString().
+ */
+export function unwrapError(error: unknown): string {
+  if (error == null) return "Unknown error";
+
+  // Standard JS Error
+  if (error instanceof Error) {
+    return error.message || String(error);
+  }
+
+  // ErrorEvent from WebSocket / browser APIs
+  if (typeof error === "object" && "type" in error) {
+    const evt = error as { type?: string; message?: string; error?: unknown };
+    if (evt.message) return `[${evt.type ?? "ErrorEvent"}] ${evt.message}`;
+    if (evt.error instanceof Error)
+      return `[${evt.type ?? "ErrorEvent"}] ${evt.error.message}`;
+    if (evt.error != null) return `[${evt.type ?? "ErrorEvent"}] ${String(evt.error)}`;
+    return `[${evt.type ?? "ErrorEvent"}] (no details)`;
+  }
+
+  // String or anything else
+  return String(error);
+}
+
 export async function execInPod(
   podName: string,
   namespace: string,
@@ -25,7 +51,7 @@ export async function execInPod(
       );
     }
   } catch (error) {
-    throw new Error(`Failed to check pod status: ${error}`);
+    throw new Error(`Failed to check pod status: ${unwrapError(error)}`);
   }
 
   return new Promise((resolve, reject) => {
@@ -84,7 +110,7 @@ export async function execInPod(
           // WebSocket connected
         },
         (error) => {
-          reject(new Error(`Exec failed: ${error}`));
+          reject(new Error(`Exec failed: ${unwrapError(error)}`));
         }
       );
   });

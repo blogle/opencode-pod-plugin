@@ -1,6 +1,7 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { Config } from "./config.js";
+import { unwrapError } from "./k8s/exec.js";
 
 export interface RepoMapping {
   name: string;
@@ -42,7 +43,7 @@ export async function cloneRepos(
         await $`git -C ${targetDir} fetch --depth=1 origin`;
         await $`git -C ${targetDir} reset --hard origin/HEAD`;
       } catch (error) {
-        console.warn(`[repos] Failed to update ${name}: ${error}`);
+        console.warn(`[repos] Failed to update ${name}: ${unwrapError(error)}`);
         // Continue anyway — stale repo is better than no repo
       }
     } else {
@@ -51,8 +52,8 @@ export async function cloneRepos(
       try {
         await $`git clone --depth=1 ${url} ${targetDir}`;
       } catch (error) {
-        console.error(`[repos] Failed to clone ${name}: ${error}`);
-        throw new Error(`Failed to clone repository "${name}" from ${url}: ${error}`);
+        console.error(`[repos] Failed to clone ${name}: ${unwrapError(error)}`);
+        throw new Error(`Failed to clone repository "${name}" from ${url}: ${unwrapError(error)}`);
       }
     }
 

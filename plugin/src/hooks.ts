@@ -3,6 +3,7 @@ import * as k8s from "@kubernetes/client-node";
 import { Config } from "./config.js";
 import { SessionStore, SandboxRecord } from "./sessionStore.js";
 import { getCoreV1Api } from "./k8s/client.js";
+import { unwrapError } from "./k8s/exec.js";
 import { buildPodManifest, buildPvcManifest } from "./k8s/podSpec.js";
 
 const SANDBOX_ID_LABEL = "opencode.dev/sandbox-id";
@@ -89,7 +90,7 @@ export async function reconcileExistingPods(
             namespace: config.namespace,
           });
         } catch (err) {
-          console.warn(`Failed to delete orphaned pod ${podName}: ${err}`);
+          console.warn(`Failed to delete orphaned pod ${podName}: ${unwrapError(err)}`);
         }
         continue;
       }
@@ -110,7 +111,7 @@ export async function reconcileExistingPods(
       });
     }
   } catch (error) {
-    console.warn(`Failed to reconcile existing pods: ${error}`);
+    console.warn(`Failed to reconcile existing pods: ${unwrapError(error)}`);
   }
 }
 
@@ -131,7 +132,7 @@ export async function sessionCreated(input: PluginInput): Promise<void> {
         });
       } catch (error) {
         // PVC might already exist
-        console.warn(`PVC creation failed (might already exist): ${error}`);
+        console.warn(`PVC creation failed (might already exist): ${unwrapError(error)}`);
       }
     }
   }
@@ -146,7 +147,7 @@ export async function sessionCreated(input: PluginInput): Promise<void> {
       body: pod,
     });
   } catch (error) {
-    throw new Error(`Failed to create pod: ${error}`);
+    throw new Error(`Failed to create pod: ${unwrapError(error)}`);
   }
 
   // Wait for pod to be running
@@ -183,7 +184,7 @@ export async function sessionDeleted(input: PluginInput): Promise<void> {
       namespace: config.namespace,
     });
   } catch (error) {
-    console.warn(`Failed to delete pod: ${error}`);
+    console.warn(`Failed to delete pod: ${unwrapError(error)}`);
   }
 
   // Note: PVC is NOT deleted when persistWorkspace is enabled.
