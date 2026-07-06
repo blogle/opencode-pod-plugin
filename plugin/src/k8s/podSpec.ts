@@ -79,7 +79,7 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
     ? [
         {
           name: "git-clone",
-          image: "alpine/git:2.45.2-r0",
+          image: "alpine/git:2.54.0",
           imagePullPolicy: "IfNotPresent",
           command: [
             "sh",

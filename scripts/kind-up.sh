@@ -55,8 +55,8 @@ echo "Sandbox image loaded into kind"
 
 # Load alpine/git image for init container (pinned for reproducibility)
 echo "Loading alpine/git image for init container..."
-docker pull alpine/git:2.45.2-r0
-kind load docker-image alpine/git:2.45.2-r0 --name "$CLUSTER_NAME"
+docker pull alpine/git:2.54.0
+kind load docker-image alpine/git:2.54.0 --name "$CLUSTER_NAME"
 
 echo "alpine/git image loaded into kind"
 
