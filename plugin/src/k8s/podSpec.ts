@@ -84,13 +84,13 @@ export function buildPodManifest(input: PodSpecInput): k8s.V1Pod {
           command: [
             "sh",
             "-c",
-            "git clone --depth=1 \"$REPO_URL\" /workspace && chown -R 1000:1000 /workspace",
+            "git clone --depth=1 \"$REPO_URL\" /workspace",
           ],
           env: [{ name: "REPO_URL", value: repoUrl }],
           volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
           securityContext: {
-            runAsNonRoot: false,
-            runAsUser: 0,
+            runAsNonRoot: true,
+            runAsUser: 1000,
             allowPrivilegeEscalation: false,
             readOnlyRootFilesystem: false,
             capabilities: { drop: ["ALL"] },
