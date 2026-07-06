@@ -13,6 +13,9 @@ RUN apt-get update && \
       ripgrep && \
     rm -rf /var/lib/apt/lists/*
 
+# Create non-root user matching Kubernetes runAsUser
+RUN useradd --create-home --uid 1000 --shell /bin/bash sandbox
+
 # Install Determinate Nix (pinned version for reproducibility)
 # Using version 0.16.0 for stability
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix/tag/v0.16.0 | \
@@ -25,9 +28,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/
 ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}"
 
 # Set up direnv hook for bash (auto-loads dev environments on cd)
-RUN echo 'eval "$(direnv hook bash)"' >> /root/.bashrc && \
+RUN echo 'eval "$(direnv hook bash)"' >> /home/sandbox/.bashrc && \
     mkdir -p /etc/bash_completion.d && \
-    echo 'eval "$(direnv hook bash)"' > /etc/bash_completion.d/direnv.sh
+    echo 'eval "$(direnv hook bash)"' > /etc/bash_completion.d/direnv.sh && \
+    chown -R 1000:1000 /home/sandbox
 
 # Install attic client for Nix binary cache push/pull
 # ponytail: using a dedicated profile to avoid polluting the default nix profile;
