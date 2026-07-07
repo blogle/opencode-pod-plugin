@@ -408,3 +408,6 @@ export { SessionStore, SandboxRecord } from "./sessionStore.js";
 export { RepoMapping, findRepoForDirectory } from "./repos.js";
 
 export default K8sSandboxPlugin;
+
+// OpenCode plugin loader expects a named "server" export
+export const server = K8sSandboxPlugin;
