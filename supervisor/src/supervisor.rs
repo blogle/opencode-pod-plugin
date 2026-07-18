@@ -122,11 +122,12 @@ pub async fn run(config: SupervisorConfig) -> Result<()> {
         .context("build health client")?;
     let mut terminating = false;
     let mut termination_checkpoint_error = None;
-    let mut restart_count = 0_u64;
+    let mut start_count = 0_u64;
     while !terminating {
         let mut child = spawn_child(&config)?;
         let pid = child.id().context("child process has no PID")?;
-        restart_count += u64::from(restart_count > 0);
+        let restart_count = start_count;
+        start_count = start_count.saturating_add(1);
         {
             let mut current = status.write().await;
             current.child_running = true;
