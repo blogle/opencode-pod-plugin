@@ -1,0 +1,18 @@
+diff --git a/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts b/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
+index 7777777..8888888 100644
+--- a/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
++++ b/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
+@@ -104,4 +104,12 @@ function proxyRemote(
+     const proxyURL = workspaceProxyURL(target.url, url)
+     const headers = request.headers as Record<string, string>
+-    if (headers["upgrade"]?.toLowerCase() === "websocket") return yield* HttpApiProxy.websocket(request, proxyURL)
++    if (headers["upgrade"]?.toLowerCase() === "websocket") {
++      // The WebSocket constructor cannot receive target headers. OpenCode's
++      // authorization middleware accepts the same base64 Basic credential as
++      // an auth_token query parameter for upgrade requests.
++      const authorization = new Headers(target.headers).get("authorization")
++      const token = authorization?.match(/^Basic\s+(.+)$/i)?.[1]
++      if (token) proxyURL.searchParams.set("auth_token", token)
++      return yield* HttpApiProxy.websocket(request, proxyURL)
++    }
+     const response = yield* HttpApiProxy.http(client, proxyURL, target.headers, request)

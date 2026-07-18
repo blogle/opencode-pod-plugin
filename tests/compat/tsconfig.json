@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@opencode-ai/plugin": ["../../plugin/node_modules/@opencode-ai/plugin/dist/index.d.ts"]
+    }
+  },
+  "files": ["public-plugin-types.ts"]
+}
