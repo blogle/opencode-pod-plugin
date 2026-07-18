@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central
+  namespace: opencode-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: opencode
+          imagePullPolicy: Never
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: opencode-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          imagePullPolicy: Never

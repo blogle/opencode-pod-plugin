@@ -1,0 +1,29 @@
+projects:
+  image-project:
+    name: Image-backed Project
+    repository: https://github.com/example/image-project.git
+    defaultRef: main
+    environment:
+      mode: image
+      image: ghcr.io/example/image-project-dev:2026.07.17
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+  nix-project:
+    name: Nix-backed Project
+    repository: https://github.com/example/nix-project.git
+    defaultRef: main
+    environment:
+      mode: nix
+      flake: .#default
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi

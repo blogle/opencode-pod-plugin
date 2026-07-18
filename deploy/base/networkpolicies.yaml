@@ -1,0 +1,290 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: opencode-system
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: opencode-sandboxes
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: system-dns-egress
+  namespace: opencode-system
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-dns-egress
+  namespace: opencode-sandboxes
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-to-control-plane
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchExpressions:
+      - key: opencode.dev/network-role
+        operator: In
+        values: ["central", "gateway"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              opencode.dev/ingress: "true"
+      ports:
+        - { protocol: TCP, port: 4096 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8081 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: central-to-gateway
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/network-role: gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              opencode.dev/network-role: central
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-to-central
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/network-role: central
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              opencode.dev/network-role: gateway
+      ports:
+        - { protocol: TCP, port: 4096 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-to-gateway-api
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/network-role: gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-sandboxes
+          podSelector:
+            matchLabels:
+              opencode.dev/managed-by: gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: central-egress
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/network-role: central
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              opencode.dev/network-role: gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-sandboxes
+          podSelector:
+            matchLabels:
+              opencode.dev/managed-by: gateway
+      ports:
+        - { protocol: TCP, port: 4096 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress
+  namespace: opencode-system
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/network-role: gateway
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              opencode.dev/network-role: central
+      ports:
+        - { protocol: TCP, port: 4096 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-sandboxes
+          podSelector:
+            matchLabels:
+              opencode.dev/managed-by: gateway
+      ports:
+        # Preview ports and private supervisor/checkpoint ports, but never the
+        # child OpenCode port. Preview routing also rejects 4097 and 4098.
+        - { protocol: TCP, port: 1, endPort: 4095 }
+        - { protocol: TCP, port: 4097, endPort: 65535 }
+    - to:
+        # Covers the in-cluster Kubernetes API Service on common cluster CIDRs.
+        - ipBlock: { cidr: 10.0.0.0/8 }
+        - ipBlock: { cidr: 172.16.0.0/12 }
+        - ipBlock: { cidr: 192.168.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: central-child-opencode-ingress
+  namespace: opencode-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/managed-by: gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-system
+          podSelector:
+            matchLabels:
+              opencode.dev/network-role: central
+      ports:
+        - { protocol: TCP, port: 4096 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-preview-checkpoint-ingress
+  namespace: opencode-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/managed-by: gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-system
+          podSelector:
+            matchLabels:
+              opencode.dev/network-role: gateway
+      ports:
+        - { protocol: TCP, port: 1, endPort: 4095 }
+        - { protocol: TCP, port: 4097, endPort: 65535 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-gateway-egress
+  namespace: opencode-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/managed-by: gateway
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode-system
+          podSelector:
+            matchLabels:
+              opencode.dev/network-role: gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-git-package-egress
+  namespace: opencode-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      opencode.dev/managed-by: gateway
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 22 }
+        - { protocol: TCP, port: 443 }

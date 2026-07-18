@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: adapter-internal-token
+  namespace: opencode-system
+stringData:
+  token: kind-development-internal-token

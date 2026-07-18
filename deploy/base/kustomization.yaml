@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces.yaml
+  - serviceaccounts-rbac.yaml
+  - storage.yaml
+  - adapter-token-secret.yaml
+  - central.yaml
+  - gateway.yaml
+  - services.yaml
+  - networkpolicies.yaml
+
+configMapGenerator:
+  - name: opencode-platform-config
+    namespace: opencode-system
+    files:
+      - platform.yaml=config/platform.yaml
+  - name: opencode-projects-config
+    namespace: opencode-system
+    files:
+      - projects.yaml=config/projects.yaml
+  - name: opencode-catalog-sync
+    namespace: opencode-system
+    files:
+      - catalog-sync.py=config/catalog-sync.py
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: opencode-workspaces
+    includeSelectors: false

@@ -23,7 +23,9 @@ COPY plugin/src ./src
 RUN npm ci && npm run build && npm prune --omit=dev
 
 FROM debian:12.11-slim
-RUN apt-get update && apt-get install --yes --no-install-recommends ca-certificates git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates git python3 python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/packages/opencode/dist/opencode-linux-x64/bin/opencode /usr/local/bin/opencode
 COPY --from=plugin /plugin/dist/ /opt/opencode-plugin/
 COPY --from=plugin /plugin/node_modules/ /opt/node_modules/

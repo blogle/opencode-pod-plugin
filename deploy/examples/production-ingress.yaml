@@ -1,0 +1,76 @@
+# Label the Traefik/auth-proxy namespace with opencode.dev/ingress=true so the
+# base NetworkPolicies admit it. The referenced Middleware should authenticate
+# requests and set X-Auth-Request-Email; never trust that header from clients.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: central
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: auth-system-forward-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["app.opencode.example.com"]
+      secretName: opencode-wildcard-tls
+  rules:
+    - host: app.opencode.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: central
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-api
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: auth-system-forward-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["workspaces.opencode.example.com"]
+      secretName: opencode-wildcard-tls
+  rules:
+    - host: workspaces.opencode.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: api
+---
+# Create wildcard DNS for *.opencode.example.com and a wildcard TLS Secret.
+# Traefik forwards HTTP, SSE, and WebSocket preview traffic to this one Service.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-previews
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: auth-system-forward-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["*.opencode.example.com"]
+      secretName: opencode-wildcard-tls
+  rules:
+    - host: "*.opencode.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: preview

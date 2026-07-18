@@ -1,0 +1,15 @@
+projects:
+  local-project:
+    name: Local Development Project
+    repository: https://github.com/example/project.git
+    defaultRef: main
+    environment:
+      mode: image
+      image: opencode-project-dev:0.1.0
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opencode-system
+  labels:
+    app.kubernetes.io/name: opencode-system
+    opencode.dev/network-role: system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opencode-sandboxes
+  labels:
+    app.kubernetes.io/name: opencode-sandboxes
+    opencode.dev/network-role: sandboxes

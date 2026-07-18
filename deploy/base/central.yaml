@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central
+  namespace: opencode-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: central
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: central
+        opencode.dev/network-role: central
+    spec:
+      serviceAccountName: central
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: catalog-sync
+          image: ghcr.io/blogle/opencode-central:1.18.3-patched-127bdb3
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - /etc/opencode-catalog/catalog-sync.py
+            - /etc/opencode-projects/projects.yaml
+            - /catalog
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: catalog
+              mountPath: /catalog
+            - name: projects-config
+              mountPath: /etc/opencode-projects
+              readOnly: true
+            - name: catalog-sync
+              mountPath: /etc/opencode-catalog
+              readOnly: true
+      containers:
+        - name: opencode
+          image: ghcr.io/blogle/opencode-central:1.18.3-patched-127bdb3
+          imagePullPolicy: IfNotPresent
+          args: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+          env:
+            - name: HOME
+              value: /var/lib/opencode
+            - name: XDG_DATA_HOME
+              value: /var/lib/opencode/data
+            - name: OPENCODE_EXPERIMENTAL_WORKSPACES
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 4096
+          readinessProbe:
+            httpGet:
+              path: /global/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /global/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/opencode
+            - name: catalog
+              mountPath: /catalog
+            - name: adapter-token
+              mountPath: /run/opencode-gateway
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: central-state
+        - name: catalog
+          emptyDir: {}
+        - name: adapter-token
+          secret:
+            secretName: adapter-internal-token
+            defaultMode: 0440
+        - name: projects-config
+          configMap:
+            name: opencode-projects-config
+        - name: catalog-sync
+          configMap:
+            name: opencode-catalog-sync
+            defaultMode: 0550

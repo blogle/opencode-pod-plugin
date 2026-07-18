@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+configMapGenerator:
+  - name: opencode-platform-config
+    namespace: opencode-system
+    behavior: replace
+    files:
+      - platform.yaml=config/platform.yaml
+  - name: opencode-projects-config
+    namespace: opencode-system
+    behavior: replace
+    files:
+      - projects.yaml=config/projects.yaml
+
+images:
+  - name: ghcr.io/blogle/opencode-central
+    newName: opencode-central
+    newTag: 1.18.3-patched-127bdb3
+  - name: ghcr.io/blogle/opencode-gateway
+    newName: opencode-gateway
+    newTag: 0.1.0
+
+patches:
+  - path: local-image-pull-policy.yaml
+  - path: development-token.yaml

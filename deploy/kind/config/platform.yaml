@@ -1,0 +1,25 @@
+namespace: opencode-sandboxes
+baseDomain: test.invalid
+listen: 0.0.0.0:8080
+previewListen: 0.0.0.0:8081
+statePath: /var/lib/opencode-sandbox/gateway.sqlite3
+opencode:
+  version: 1.18.3
+  centralUrl: http://central.opencode-system.svc.cluster.local:4096
+runtime:
+  image: opencode-runtime:1.18.3
+  genericNixImage: opencode-generic-nix:1.18.3
+  gatewayUrl: http://gateway.opencode-system.svc.cluster.local:8080
+checkpoint:
+  path: /var/lib/opencode-sandbox/checkpoints
+  periodicSeconds: 15
+lifecycle:
+  suspendAfterIdleSeconds: 300
+  readyTimeoutSeconds: 120
+  pollSeconds: 5
+  terminationGraceSeconds: 30
+auth:
+  mode: development
+  user: developer@kind.local
+  internalTokenFile: /run/opencode-gateway/token
+projectsFile: /etc/opencode-sandbox/projects.yaml

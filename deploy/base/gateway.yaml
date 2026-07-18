@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: opencode-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        opencode.dev/network-role: gateway
+    spec:
+      serviceAccountName: gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: ghcr.io/blogle/opencode-gateway:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATEWAY_CONFIG
+              value: /etc/opencode-sandbox/platform.yaml
+            - name: RUST_LOG
+              value: info
+          ports:
+            - name: api
+              containerPort: 8080
+            - name: preview
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/opencode-sandbox
+            - name: platform-config
+              mountPath: /etc/opencode-sandbox/platform.yaml
+              subPath: platform.yaml
+              readOnly: true
+            - name: projects-config
+              mountPath: /etc/opencode-sandbox/projects.yaml
+              subPath: projects.yaml
+              readOnly: true
+            - name: adapter-token
+              mountPath: /run/opencode-gateway
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: gateway-state
+        - name: platform-config
+          configMap:
+            name: opencode-platform-config
+        - name: projects-config
+          configMap:
+            name: opencode-projects-config
+        - name: adapter-token
+          secret:
+            secretName: adapter-internal-token
+            defaultMode: 0440

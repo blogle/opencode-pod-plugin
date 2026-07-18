@@ -1,0 +1,15 @@
+projects:
+  example:
+    name: Example Project
+    repository: https://github.com/example/project.git
+    defaultRef: main
+    environment:
+      mode: image
+      image: ghcr.io/example/project-dev:2026.07.17
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
