@@ -37,6 +37,7 @@ COPY --from=plugin /src/node_modules/ /opt/opencode/config/node_modules/
 COPY runtime/platform-runtime.js /opt/opencode/config/plugins/platform-runtime.js
 COPY runtime/opencode.json /opt/opencode/config/opencode.json
 RUN chmod -R a+rX /opt/opencode \
+    && ln -s ../config/node_modules /opt/opencode/runtime-plugin/node_modules \
     && test -f /opt/opencode/runtime-plugin/plugin.js \
     && test -f /opt/opencode/config/plugins/platform-runtime.js \
     && /opt/opencode/bin/opencode --version

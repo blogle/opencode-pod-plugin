@@ -26,14 +26,29 @@ function defaultLog(record: Record<string, unknown>): void {
 
 export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}): Plugin {
   return async ({ worktree }) => {
+    const log = dependencies.log ?? defaultLog;
     const config = loadRuntimeConfig(dependencies.env);
     const client = new RuntimeClient(config, dependencies.fetch);
-    const lifecycle = new LifecycleCoordinator(client, dependencies.log ?? defaultLog);
+    const lifecycle = new LifecycleCoordinator(client, log);
     const environment = new EnvironmentTracker(worktree, dependencies.readFile);
+    log({
+      level: "info",
+      component: "opencode-runtime-plugin",
+      operation: "loaded",
+      workspaceId: config.workspaceId,
+    });
 
     const refreshFingerprint = async () => {
       const result = await environment.refresh();
-      if (result.changed) lifecycle.markEnvironmentDirty();
+      if (result.changed) {
+        lifecycle.markEnvironmentDirty();
+        log({
+          level: "info",
+          component: "opencode-runtime-plugin",
+          operation: "environment-changed",
+          fingerprint: result.fingerprint.hash,
+        });
+      }
       return result.fingerprint;
     };
 

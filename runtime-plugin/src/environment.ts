@@ -19,15 +19,36 @@ export type DirenvRunner = (cwd: string, executable: string) => Promise<string>;
 export type FileReader = (path: string) => Promise<Buffer>;
 
 export async function runDirenv(cwd: string, executable: string): Promise<string> {
+  const env: NodeJS.ProcessEnv = { ...process.env, DIRENV_LOG_FORMAT: "" };
+  // The long-lived OpenCode process inherits direnv's watch cache. Clearing
+  // these values forces each shell hook to evaluate projected Secret updates
+  // even though Kubernetes swaps the symlink target atomically.
+  delete env.DIRENV_DIFF;
+  delete env.DIRENV_DIR;
+  delete env.DIRENV_WATCHES;
   try {
-    const result = await execFileAsync(executable, ["export", "json"], {
+    await execFileAsync(executable, ["allow", cwd], {
       cwd,
-      env: { ...process.env, DIRENV_LOG_FORMAT: "" },
+      env,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    const result = await execFileAsync(executable, ["exec", cwd, "/usr/bin/env", "-0"], {
+      cwd,
+      env,
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
       timeout: 120_000,
     });
-    return result.stdout;
+    const evaluated: Record<string, string> = {};
+    for (const entry of result.stdout.split("\0")) {
+      if (!entry) continue;
+      const separator = entry.indexOf("=");
+      if (separator <= 0) continue;
+      evaluated[entry.slice(0, separator)] = entry.slice(separator + 1);
+    }
+    return JSON.stringify(evaluated);
   } catch {
     // direnv output can contain values from the private profile, so never include it.
     throw new Error(`direnv export json failed for ${cwd}`);
