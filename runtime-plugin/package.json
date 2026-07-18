@@ -1,0 +1,28 @@
+{
+  "name": "@opencode/k8s-sandbox-runtime-plugin",
+  "version": "0.1.0",
+  "description": "Injected OpenCode runtime integration for Kubernetes workspaces",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.9",
+    "typescript": "5.9.2",
+    "vitest": "1.6.1"
+  }
+}
