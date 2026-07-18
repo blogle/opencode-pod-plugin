@@ -1,7 +1,8 @@
 {
   "name": "@opencode/k8s-sandbox-plugin",
   "version": "0.1.0",
-  "description": "Plugin for opencode K8s sandbox integration",
+  "description": "OpenCode native Kubernetes workspace adapter",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -12,19 +13,18 @@
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["opencode", "kubernetes", "sandbox"],
+  "keywords": ["opencode", "kubernetes", "workspace"],
   "license": "MIT",
   "dependencies": {
-    "@kubernetes/client-node": "^1.0.0",
-    "@opencode-ai/plugin": "latest",
-    "zod": "4.1.8"
+    "@opencode-ai/plugin": "1.18.3",
+    "@opencode-ai/sdk": "1.18.3"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.3.0",
-    "vitest": "^1.0.0",
-    "eslint": "^8.50.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0"
+    "@types/node": "20.19.9",
+    "typescript": "5.9.2",
+    "vitest": "1.6.1",
+    "eslint": "8.57.1",
+    "@typescript-eslint/parser": "6.21.0",
+    "@typescript-eslint/eslint-plugin": "6.21.0"
   }
 }
