@@ -2,8 +2,14 @@
 target/
 node_modules/
 dist/
+.kube/
+.direnv/
+__pycache__/
+.vite/
+*.pyc
 *.lock
 !package-lock.json
+!Cargo.lock
 
 # Test files
 _test_*.ts
