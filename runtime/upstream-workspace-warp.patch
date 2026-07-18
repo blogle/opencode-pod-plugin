@@ -1,0 +1,22 @@
+diff --git a/packages/opencode/src/control-plane/workspace.ts b/packages/opencode/src/control-plane/workspace.ts
+--- a/packages/opencode/src/control-plane/workspace.ts
++++ b/packages/opencode/src/control-plane/workspace.ts
+@@ -486,6 +486,10 @@ const layer = Layer.effect(
+           return
+         }
+ 
++        // Persist the binding before replay so the binding event is included
++        // in the transferred sequence and cannot race the child's sync steal.
++        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
++
+         const rows = yield* db
+           .select({
+             id: EventTable.id,
+@@ -550,7 +554,5 @@ const layer = Layer.effect(
+             body,
+           })
+         }
+-
+-        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+       })
+     })

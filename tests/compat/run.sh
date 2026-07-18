@@ -99,4 +99,14 @@ grep -Fq 'url.searchParams.get(AUTH_TOKEN_QUERY)' "$authorization" || die "upstr
 grep -Fq 'HttpApiProxy.websocket(request, proxyURL)' "$routing" || die "WebSocket forwarding source is missing"
 pass "authenticated WebSocket patch behavior represented"
 
+git -C "$checkout" reset --quiet --hard "$OPENCODE_COMMIT"
+git -C "$checkout" apply --check "$ROOT_DIR/runtime/upstream-workspace-warp.patch" || \
+  die "session binding-order patch no longer applies to pinned upstream"
+git -C "$checkout" apply "$ROOT_DIR/runtime/upstream-workspace-warp.patch"
+grep -B4 -Fq 'const rows = yield* db' "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "workspace event replay source is missing"
+grep -Fq 'yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })' \
+  "$checkout/packages/opencode/src/control-plane/workspace.ts" || die "session binding patch is missing"
+pass "session binding is persisted before remote event replay"
+
 printf 'compat: static Phase 1 gate passed for OpenCode %s. This gate does not start central or child servers.\n' "$OPENCODE_VERSION"

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "plugin": [
+    [
+      "/opt/opencode-plugin/index.js",
+      {
+        "gatewayUrl": "http://gateway.opencode-system.svc.cluster.local:8080",
+        "gatewayTokenFile": "/run/opencode-gateway/token"
+      }
+    ]
+  ]
+}
