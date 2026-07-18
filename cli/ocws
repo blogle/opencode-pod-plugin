@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ocws env push [--project KEY] [--file PATH] [connection options]
+  ocws env status [--project KEY] [connection options]
+  ocws env delete [--project KEY] [connection options]
+
+Connection options:
+  --gateway-url URL       Gateway base URL (default: $OCWS_GATEWAY_URL or http://127.0.0.1:8080)
+  --token TOKEN           Bearer token (or set $OCWS_TOKEN)
+  --token-file PATH       Read bearer token from a file (or set $OCWS_TOKEN_FILE)
+  --identity VALUE        Trusted identity value (or set $OCWS_IDENTITY)
+  --identity-header NAME  Trusted identity header (default: $OCWS_IDENTITY_HEADER or X-Forwarded-User)
+
+When --project is omitted, ocws queries /v1/projects and matches the current
+repository's origin remote. Push uses .envrc when --file is omitted.
+EOF
+}
+
+die() {
+  printf 'ocws: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+[[ ${1:-} == "env" ]] || {
+  usage >&2
+  exit 2
+}
+shift
+
+action=${1:-}
+case "$action" in
+  push|status|delete) shift ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+gateway_url=${OCWS_GATEWAY_URL:-http://127.0.0.1:8080}
+token=${OCWS_TOKEN:-}
+token_file=${OCWS_TOKEN_FILE:-}
+identity=${OCWS_IDENTITY:-}
+identity_header=${OCWS_IDENTITY_HEADER:-X-Forwarded-User}
+project=""
+profile_file=".envrc"
+
+while (($#)); do
+  case "$1" in
+    --project|--file|--gateway-url|--token|--token-file|--identity|--identity-header)
+      (($# >= 2)) || die "$1 requires a value"
+      option=$1
+      value=$2
+      shift 2
+      case "$option" in
+        --project) project=$value ;;
+        --file) profile_file=$value ;;
+        --gateway-url) gateway_url=$value ;;
+        --token) token=$value ;;
+        --token-file) token_file=$value ;;
+        --identity) identity=$value ;;
+        --identity-header) identity_header=$value ;;
+      esac
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+[[ $gateway_url == http://* || $gateway_url == https://* ]] || die "gateway URL must use http or https"
+gateway_url=${gateway_url%/}
+[[ $identity_header =~ ^[A-Za-z0-9-]+$ ]] || die "identity header contains invalid characters"
+[[ -z $token || -z $token_file ]] || die "use a token or token file, not both"
+
+if [[ -n $token_file ]]; then
+  [[ -r $token_file ]] || die "cannot read token file: $token_file"
+  token=$(<"$token_file")
+  token=${token%$'\n'}
+  [[ -n $token ]] || die "token file is empty"
+fi
+
+require_command curl
+require_command jq
+
+headers=(--header "Accept: application/json")
+[[ -z $token ]] || headers+=(--header "Authorization: Bearer $token")
+[[ -z $identity ]] || headers+=(--header "$identity_header: $identity")
+
+response_file=""
+http_status=""
+cleanup() {
+  [[ -z $response_file ]] || rm -f "$response_file"
+}
+trap cleanup EXIT
+
+request() {
+  local method=$1
+  local path=$2
+  local upload=${3:-}
+  local status
+
+  cleanup
+  response_file=$(mktemp "${TMPDIR:-/tmp}/ocws-response.XXXXXX")
+  local args=(--silent --show-error --output "$response_file" --write-out '%{http_code}'
+    --request "$method" "${headers[@]}")
+  if [[ -n $upload ]]; then
+    args+=(--header "Content-Type: text/plain; charset=utf-8" --data-binary "@$upload")
+  fi
+  if ! status=$(curl "${args[@]}" "$gateway_url$path"); then
+    die "could not reach gateway at $gateway_url"
+  fi
+  http_status=$status
+}
+
+canonical_remote() {
+  local value=$1
+  local host path
+  value=${value%/}
+  value=${value%.git}
+
+  case "$value" in
+    http://*|https://*|ssh://*)
+      value=${value#*://}
+      value=${value#*@}
+      host=${value%%/*}
+      path=${value#*/}
+      host=${host%%:*}
+      printf '%s/%s\n' "${host,,}" "$path"
+      ;;
+    *@*:*)
+      host=${value%%:*}
+      host=${host#*@}
+      path=${value#*:}
+      printf '%s/%s\n' "${host,,}" "$path"
+      ;;
+    file://*) printf '%s\n' "${value#file://}" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
+infer_project() {
+  local status remote canonical key repository candidate matches=0 selected=""
+  require_command git
+  remote=$(git remote get-url origin 2>/dev/null) || die "--project is required outside a Git repository with an origin remote"
+  canonical=$(canonical_remote "$remote")
+  request GET "/v1/projects"
+  status=$http_status
+  [[ $status == 200 ]] || die "project lookup failed with HTTP $status"
+  jq -e 'type == "array" and all(.[]; (.key | type == "string") and (.repository | type == "string"))' \
+    "$response_file" >/dev/null || die "gateway returned an invalid project list"
+
+  while IFS= read -r -d '' key && IFS= read -r -d '' repository; do
+    candidate=$(canonical_remote "$repository")
+    if [[ $candidate == "$canonical" ]]; then
+      selected=$key
+      ((matches += 1))
+    fi
+  done < <(jq -j '.[] | .key, "\u0000", .repository, "\u0000"' "$response_file")
+
+  ((matches > 0)) || die "origin remote is not registered by the gateway"
+  ((matches == 1)) || die "origin remote matches multiple registered projects; use --project"
+  project=$selected
+}
+
+[[ -n $project ]] || infer_project
+project_path=$(jq -nr --arg value "$project" '$value | @uri')
+endpoint="/v1/projects/$project_path/env-profile"
+
+print_metadata() {
+  jq -e -r '
+    if (.projectKey | type) != "string" or (.owner | type) != "string" or
+       (.sha256 | type) != "string" or (.updatedAt | type) != "string" then
+      error("invalid metadata")
+    else
+      "project: \(.projectKey)\nowner: \(.owner)\nsha256: \(.sha256)\nupdated: \(.updatedAt)"
+    end
+  ' "$response_file" 2>/dev/null || die "gateway returned invalid profile metadata"
+}
+
+case "$action" in
+  push)
+    [[ -f $profile_file && -r $profile_file ]] || die "cannot read environment profile: $profile_file"
+    [[ -s $profile_file ]] || die "environment profile is empty: $profile_file"
+    request PUT "$endpoint" "$profile_file"
+    status=$http_status
+    [[ $status == 200 || $status == 201 ]] || die "profile upload failed with HTTP $status"
+    print_metadata
+    ;;
+  status)
+    request GET "$endpoint/meta"
+    status=$http_status
+    if [[ $status == 404 ]]; then
+      printf 'No environment profile for project %s.\n' "$project"
+      exit 1
+    fi
+    [[ $status == 200 ]] || die "profile status failed with HTTP $status"
+    print_metadata
+    ;;
+  delete)
+    request DELETE "$endpoint"
+    status=$http_status
+    [[ $status == 200 || $status == 204 || $status == 404 ]] || die "profile deletion failed with HTTP $status"
+    printf 'Environment profile deleted for project %s.\n' "$project"
+    ;;
+esac
