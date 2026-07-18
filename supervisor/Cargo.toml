@@ -1,0 +1,37 @@
+[package]
+name = "opencode-supervisor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "supervisor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "=1.0.98"
+axum = "=0.8.4"
+chrono = { version = "=0.4.41", default-features = false, features = ["clock", "serde"] }
+clap = { version = "=4.5.40", features = ["derive", "env"] }
+fs2 = "=0.4.3"
+hex = "=0.4.3"
+nix = { version = "=0.30.1", features = ["process", "signal"] }
+reqwest = { version = "=0.12.20", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+tokio = { version = "=1.45.1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+tempfile = "=3.20.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
