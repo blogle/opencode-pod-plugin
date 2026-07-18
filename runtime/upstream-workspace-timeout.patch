@@ -1,0 +1,11 @@
+diff --git a/packages/opencode/src/control-plane/workspace.ts b/packages/opencode/src/control-plane/workspace.ts
+--- a/packages/opencode/src/control-plane/workspace.ts
++++ b/packages/opencode/src/control-plane/workspace.ts
+@@ -887,4 +887,6 @@
+ 
+-const TIMEOUT = 5000
++// Kubernetes image pulls and checkout initialization legitimately exceed the
++// upstream local-adapter default. Creation still fails on gateway/readiness errors.
++const TIMEOUT = 300_000
+ 
+ type HistoryEvent = {

@@ -32,6 +32,7 @@ describe("pinned upstream WorkspaceAdapter contract", () => {
     const adapter = kubernetesAdapter(new GatewayClient("http://gateway.test", request));
 
     const configured = await adapter.configure(workspace);
+    expect(configured.directory).toBe("/workspace");
     await adapter.create(configured, { OPENCODE_AUTH_CONTENT: "{}" });
     const target = await adapter.target(configured);
     await adapter.remove(configured);

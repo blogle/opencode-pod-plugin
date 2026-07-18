@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1.7
-ARG OPENCODE_VERSION=1.18.3
+ARG OPENCODE_IMAGE=ghcr.io/blogle/opencode-central:1.18.3-patched-127bdb3
 
-FROM node:22.17.1-bookworm-slim AS opencode
-ARG OPENCODE_VERSION
-RUN npm install --global --ignore-scripts "opencode-linux-x64-baseline@${OPENCODE_VERSION}"
+FROM ${OPENCODE_IMAGE} AS opencode
 
 FROM oven/bun:1.3.14-debian AS bun
 
@@ -29,14 +27,18 @@ FROM debian:12.11-slim
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl git openssh-client \
     && rm -rf /var/lib/apt/lists/*
-RUN install -d -m 0755 /opt/opencode/bin /opt/opencode/config/plugins /opt/opencode/config/node_modules
-COPY --from=opencode /usr/local/lib/node_modules/opencode-linux-x64-baseline/bin/opencode /opt/opencode/bin/opencode
+RUN install -d -m 0755 /opt/opencode/bin /opt/opencode/config/plugins /opt/opencode/config/node_modules /opt/opencode/runtime-plugin
+COPY --from=opencode /usr/local/bin/opencode /opt/opencode/bin/opencode
 COPY --from=bun /usr/local/bin/bun /opt/opencode/bin/bun
 COPY --from=direnv /direnv /opt/opencode/bin/direnv
 COPY --from=supervisor /src/target/release/supervisor /opt/opencode/bin/supervisor
-COPY --from=plugin /src/dist/ /opt/opencode/config/plugins/
+COPY --from=plugin /src/dist/ /opt/opencode/runtime-plugin/
 COPY --from=plugin /src/node_modules/ /opt/opencode/config/node_modules/
+COPY runtime/platform-runtime.js /opt/opencode/config/plugins/platform-runtime.js
 COPY runtime/opencode.json /opt/opencode/config/opencode.json
-RUN chmod -R a+rX /opt/opencode && /opt/opencode/bin/opencode --version
+RUN chmod -R a+rX /opt/opencode \
+    && test -f /opt/opencode/runtime-plugin/plugin.js \
+    && test -f /opt/opencode/config/plugins/platform-runtime.js \
+    && /opt/opencode/bin/opencode --version
 ENTRYPOINT ["/bin/sh", "-ec"]
 CMD ["cp -a /opt/opencode/. /runtime/"]

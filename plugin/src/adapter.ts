@@ -41,6 +41,7 @@ export function kubernetesAdapter(gateway: GatewayClient): WorkspaceAdapter {
       return {
         ...info,
         type: "kubernetes",
+        directory: "/workspace",
         branch: extra.gitRef ?? info.branch,
         extra: {
           projectKey: extra.projectKey,

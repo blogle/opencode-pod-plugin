@@ -9,10 +9,16 @@ RUN git clone --filter=blob:none https://github.com/anomalyco/opencode.git /src 
 WORKDIR /src
 COPY runtime/upstream-websocket-auth.patch /tmp/upstream-websocket-auth.patch
 COPY runtime/upstream-workspace-warp.patch /tmp/upstream-workspace-warp.patch
+COPY runtime/upstream-workspace-timeout.patch /tmp/upstream-workspace-timeout.patch
+COPY runtime/upstream-child-session-directory.patch /tmp/upstream-child-session-directory.patch
 RUN git apply --check /tmp/upstream-websocket-auth.patch \
     && git apply --check /tmp/upstream-workspace-warp.patch \
+    && git apply --check /tmp/upstream-workspace-timeout.patch \
+    && git apply --check /tmp/upstream-child-session-directory.patch \
     && git apply /tmp/upstream-websocket-auth.patch \
-    && git apply /tmp/upstream-workspace-warp.patch
+    && git apply /tmp/upstream-workspace-warp.patch \
+    && git apply /tmp/upstream-workspace-timeout.patch \
+    && git apply /tmp/upstream-child-session-directory.patch
 RUN bun install --frozen-lockfile \
     && OPENCODE_VERSION=1.18.3 bun run --cwd packages/opencode build --single --skip-embed-web-ui --skip-install
 
@@ -30,5 +36,6 @@ COPY --from=build /src/packages/opencode/dist/opencode-linux-x64/bin/opencode /u
 COPY --from=plugin /plugin/dist/ /opt/opencode-plugin/
 COPY --from=plugin /plugin/node_modules/ /opt/node_modules/
 COPY runtime/central-opencode.json /etc/opencode/opencode.json
+RUN test -f /opt/opencode-plugin/plugin.js
 ENV OPENCODE_CONFIG=/etc/opencode/opencode.json
 ENTRYPOINT ["opencode"]

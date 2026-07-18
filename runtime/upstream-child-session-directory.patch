@@ -1,0 +1,69 @@
+diff --git a/packages/opencode/src/control-plane/workspace.ts b/packages/opencode/src/control-plane/workspace.ts
+--- a/packages/opencode/src/control-plane/workspace.ts
++++ b/packages/opencode/src/control-plane/workspace.ts
+@@ -671,9 +671,21 @@ const layer = Layer.effect(
+               const response = yield* http.execute(
+                 HttpClientRequest.post(route(target.url, "/sync/replay"), {
+                   headers: new Headers(target.headers),
+                   body: HttpBody.jsonUnsafe({
+                     directory: space.directory ?? "",
+-                    events,
++                    events: events.map((event) => ({
++                      ...event,
++                      data:
++                        event.seq === 0 && space.directory
++                          ? {
++                              ...event.data,
++                              info: {
++                                ...(event.data.info as Record<string, unknown>),
++                                directory: space.directory,
++                              },
++                            }
++                          : event.data,
++                    })),
+                   }),
+                 }),
+               )
+
+diff --git a/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts b/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
+--- a/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
++++ b/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
+@@ -32,12 +32,22 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (hand
+     })
+ 
+     const replay = Effect.fn("SyncHttpApi.replay")(function* (ctx: { payload: typeof ReplayPayload.Type }) {
++      const directory = ctx.payload.directory
+       const payload: EventV2.SerializedEvent[] = ctx.payload.events.map((event) => ({
+         id: event.id,
+         aggregateID: event.aggregateID,
+         seq: event.seq,
+         type: event.type,
+-        data: { ...event.data },
++        data:
++          event.seq === 0 && directory
++            ? {
++                ...event.data,
++                info: {
++                  ...(event.data.info as Record<string, unknown>),
++                  directory,
++                },
++              }
++            : { ...event.data },
+       }))
+       const source = payload[0].aggregateID
+       yield* Effect.logInfo("sync replay requested", {
+
+diff --git a/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts b/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
+--- a/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
++++ b/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts
+@@ -179,7 +179,9 @@ function planRequest(
+     }
+ 
+     return RequestPlan.Local({
+-      directory: session?.directory || defaultDirectory(request, url),
++      directory: envWorkspaceID
++        ? defaultDirectory(request, url)
++        : session?.directory || defaultDirectory(request, url),
+       workspaceID: envWorkspaceID ?? workspaceID,
+     })
+   })

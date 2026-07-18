@@ -1,5 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
-  "plugin": ["/opt/opencode/config/plugins/index.js"]
+  "plugin": ["/opt/opencode/config/plugins/platform-runtime.js"]
 }

@@ -109,4 +109,27 @@ grep -Fq 'yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID:
   "$checkout/packages/opencode/src/control-plane/workspace.ts" || die "session binding patch is missing"
 pass "session binding is persisted before remote event replay"
 
+git -C "$checkout" reset --quiet --hard "$OPENCODE_COMMIT"
+git -C "$checkout" apply --check "$ROOT_DIR/runtime/upstream-workspace-timeout.patch" || \
+  die "workspace provisioning timeout patch no longer applies to pinned upstream"
+git -C "$checkout" apply "$ROOT_DIR/runtime/upstream-workspace-timeout.patch"
+grep -Fq 'const TIMEOUT = 300_000' "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "workspace provisioning timeout patch is missing"
+pass "remote provisioning timeout supports Kubernetes cold starts"
+
+git -C "$checkout" reset --quiet --hard "$OPENCODE_COMMIT"
+git -C "$checkout" apply --check "$ROOT_DIR/runtime/upstream-child-session-directory.patch" || \
+  die "child session directory patch no longer applies to pinned upstream"
+git -C "$checkout" apply "$ROOT_DIR/runtime/upstream-child-session-directory.patch"
+grep -Fq 'event.seq === 0 && space.directory' \
+  "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "child session directory patch is missing"
+grep -Fq 'event.seq === 0 && directory' \
+  "$checkout/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts" || \
+  die "child replay directory patch is missing"
+grep -Fq 'directory: envWorkspaceID' \
+  "$checkout/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts" || \
+  die "child request directory routing patch is missing"
+pass "remote replay binds sessions to the child checkout directory"
+
 printf 'compat: static Phase 1 gate passed for OpenCode %s. This gate does not start central or child servers.\n' "$OPENCODE_VERSION"
