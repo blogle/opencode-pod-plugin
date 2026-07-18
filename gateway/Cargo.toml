@@ -1,0 +1,36 @@
+[package]
+name = "opencode-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "OpenCode Kubernetes workspace control gateway"
+
+[dependencies]
+anyhow = "=1.0.103"
+async-trait = "=0.1.89"
+axum = "=0.7.9"
+futures = "=0.3.31"
+k8s-openapi = { version = "=0.22.0", features = ["v1_30"] }
+kube = { version = "=0.93.1", features = ["client", "runtime", "rustls-tls"] }
+reqwest = { version = "=0.12.20", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+serde_urlencoded = "=0.7.1"
+serde_yaml = "=0.9.34"
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+tokio = { version = "=1.53.0", features = ["full"] }
+tower-http = { version = "=0.5.2", features = ["trace"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "=1.24.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tower = { version = "=0.5.3", features = ["util"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
