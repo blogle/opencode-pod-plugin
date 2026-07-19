@@ -27,11 +27,18 @@ function defaultLog(record: Record<string, unknown>): void {
 export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}): Plugin {
   return async ({ worktree }) => {
     const log = dependencies.log ?? defaultLog;
+    const safeLog: Log = (record) => {
+      try {
+        log(record);
+      } catch {
+        // Observability must never prevent plugin initialization or shell hooks.
+      }
+    };
     const config = loadRuntimeConfig(dependencies.env);
     const client = new RuntimeClient(config, dependencies.fetch);
-    const lifecycle = new LifecycleCoordinator(client, log);
+    const lifecycle = new LifecycleCoordinator(client, safeLog);
     const environment = new EnvironmentTracker(worktree, dependencies.readFile);
-    log({
+    safeLog({
       level: "info",
       component: "opencode-runtime-plugin",
       operation: "loaded",
@@ -42,7 +49,7 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
       const result = await environment.refresh();
       if (result.changed) {
         lifecycle.markEnvironmentDirty();
-        log({
+        safeLog({
           level: "info",
           component: "opencode-runtime-plugin",
           operation: "environment-changed",

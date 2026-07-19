@@ -1,11 +1,26 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const FINGERPRINT_FILES = [".envrc", "flake.nix", "flake.lock"] as const;
+
+async function governingEnvrcIsSymlink(cwd: string): Promise<boolean> {
+  let directory = resolve(cwd);
+  while (true) {
+    try {
+      return (await lstat(join(directory, ".envrc"))).isSymbolicLink();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    const parent = dirname(directory);
+    if (parent === directory) return false;
+    directory = parent;
+  }
+}
 
 export type FingerprintFile = (typeof FINGERPRINT_FILES)[number];
 export type EnvironmentHashes = Record<FingerprintFile, string | null>;
@@ -27,13 +42,15 @@ export async function runDirenv(cwd: string, executable: string): Promise<string
   delete env.DIRENV_DIR;
   delete env.DIRENV_WATCHES;
   try {
-    await execFileAsync(executable, ["allow", cwd], {
-      cwd,
-      env,
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-      timeout: 30_000,
-    });
+    if (await governingEnvrcIsSymlink(cwd)) {
+      await execFileAsync(executable, ["allow", cwd], {
+        cwd,
+        env,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      });
+    }
     const result = await execFileAsync(executable, ["exec", cwd, "/usr/bin/env", "-0"], {
       cwd,
       env,
