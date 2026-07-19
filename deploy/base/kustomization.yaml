@@ -5,7 +5,6 @@ resources:
   - namespaces.yaml
   - serviceaccounts-rbac.yaml
   - storage.yaml
-  - adapter-token-secret.yaml
   - central.yaml
   - gateway.yaml
   - services.yaml

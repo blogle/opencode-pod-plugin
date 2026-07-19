@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../base
+  - development-token.yaml
 
 configMapGenerator:
   - name: opencode-platform-config
@@ -26,4 +27,3 @@ images:
 
 patches:
   - path: local-image-pull-policy.yaml
-  - path: development-token.yaml
