@@ -1,0 +1,281 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opencode-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opencode-sandboxes
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gateway
+  namespace: opencode-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gateway
+  namespace: opencode-sandboxes
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "secrets"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gateway
+  namespace: opencode-sandboxes
+subjects:
+  - kind: ServiceAccount
+    name: gateway
+    namespace: opencode-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gateway
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gateway-internal
+  namespace: opencode-system
+type: Opaque
+stringData:
+  token: kind-e2e-adapter-token-rev2
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: opencode-system
+data:
+  platform.yaml: |
+    namespace: opencode-sandboxes
+    baseDomain: test.invalid
+    listen: 0.0.0.0:8080
+    previewListen: 0.0.0.0:8081
+    statePath: /data/gateway.sqlite3
+    opencode:
+      version: 1.18.3
+      centralUrl: http://central.opencode-system.svc.cluster.local:4096
+    runtime:
+      image: ocws-e2e-runtime:rev2
+      genericNixImage: ocws-e2e-runtime:rev2
+      gatewayUrl: http://gateway.opencode-system.svc.cluster.local:8080
+    checkpoint:
+      path: /data/checkpoints
+      periodicSeconds: 10
+    lifecycle:
+      suspendAfterIdleSeconds: 900
+      readyTimeoutSeconds: 300
+      pollSeconds: 5
+      terminationGraceSeconds: 30
+    auth:
+      mode: development
+      user: e2e@example.test
+      internalTokenFile: /run/gateway-internal/token
+    projectsFile: /etc/opencode-sandbox/projects.yaml
+  projects.yaml: |
+    projects:
+      fixture:
+        name: Kind Fixture
+        repository: http://git-server.opencode-system.svc.cluster.local:8000/fixture.git
+        defaultRef: main
+        environment:
+          mode: image
+          image: ocws-e2e-project:rev2
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-data
+  namespace: opencode-system
+  labels:
+    opencode.dev/control-plane: "true"
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  namespace: opencode-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: git-server }
+  template:
+    metadata:
+      labels: { app: git-server }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: git-server
+          image: ocws-e2e-git:rev2
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8000 }]
+          readinessProbe: { tcpSocket: { port: http }, periodSeconds: 1 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+  namespace: opencode-system
+spec:
+  selector: { app: git-server }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-llm
+  namespace: opencode-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fake-llm }
+  template:
+    metadata:
+      labels: { app: fake-llm }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: fake-llm
+          image: ocws-e2e-llm:rev2
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 1 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-llm
+  namespace: opencode-system
+spec:
+  selector: { app: fake-llm }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central
+  namespace: opencode-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: central }
+  template:
+    metadata:
+      labels: { app: central }
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: catalog
+          image: ocws-e2e-central:rev2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - until git clone http://git-server.opencode-system.svc.cluster.local:8000/fixture.git /catalog/fixture; do rm -rf /catalog/fixture; sleep 1; done
+          volumeMounts: [{ name: catalog, mountPath: /catalog }]
+      containers:
+        - name: central
+          image: ocws-e2e-central:rev2
+          imagePullPolicy: IfNotPresent
+          command: ["opencode"]
+          args: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+          env:
+            - { name: OPENCODE_EXPERIMENTAL_WORKSPACES, value: "true" }
+            - { name: OPENCODE_AUTH_CONTENT, value: '{"fixture":{"type":"api","key":"fixture-key"}}' }
+            - { name: OPENCODE_PRINT_LOGS, value: "1" }
+          ports: [{ name: http, containerPort: 4096 }]
+          readinessProbe: { httpGet: { path: /global/health, port: http }, periodSeconds: 2, failureThreshold: 60 }
+          volumeMounts:
+            - { name: catalog, mountPath: /catalog }
+            - { name: gateway-token, mountPath: /run/opencode-gateway, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: catalog, emptyDir: {} }
+        - name: gateway-token
+          secret: { secretName: gateway-internal, defaultMode: 288 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: central
+  namespace: opencode-system
+spec:
+  selector: { app: central }
+  ports: [{ name: http, port: 4096, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: opencode-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      serviceAccountName: gateway
+      securityContext:
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: ocws-e2e-gateway:rev2
+          imagePullPolicy: IfNotPresent
+          env: [{ name: GATEWAY_CONFIG, value: /etc/opencode-sandbox/platform.yaml }]
+          ports:
+            - { name: api, containerPort: 8080 }
+            - { name: preview, containerPort: 8081 }
+          readinessProbe: { httpGet: { path: /readyz, port: api }, periodSeconds: 2, failureThreshold: 60 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/opencode-sandbox, readOnly: true }
+            - { name: data, mountPath: /data }
+            - { name: internal-token, mountPath: /run/gateway-internal, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: config
+          configMap: { name: gateway-config }
+        - name: data
+          persistentVolumeClaim: { claimName: gateway-data }
+        - name: internal-token
+          secret: { secretName: gateway-internal, defaultMode: 288 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: opencode-system
+spec:
+  selector: { app: gateway }
+  ports:
+    - { name: api, port: 8080, targetPort: api }
+    - { name: preview, port: 8081, targetPort: preview }
