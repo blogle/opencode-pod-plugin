@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "fixture/fixture-model",
+  "autoupdate": false,
+  "permission": "allow",
+  "plugin": ["./.opencode/plugins/fixture-plugin.js"],
+  "provider": {
+    "fixture": {
+      "name": "Deterministic fixture provider",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://fake-llm.opencode-system.svc.cluster.local:8080/v1",
+        "apiKey": "fixture-key"
+      },
+      "models": {
+        "fixture-model": {
+          "name": "Fixture model",
+          "tool_call": true,
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          }
+        }
+      }
+    }
+  }
+}
