@@ -219,9 +219,11 @@ def state_snapshot(central, workspace, session):
 
     head = capture("git rev-parse HEAD")
     status = capture("git status --porcelain=v2 -z --untracked-files=all | base64 -w0; printf '\\n'")
-    hashes = capture(
-        "for f in README.md staged.txt both.txt untracked.txt staged-new.txt; do sha256sum \"$f\"; done"
-    ).splitlines()
+    hash_files = ("README.md", "staged.txt", "both.txt", "untracked.txt", "staged-new.txt")
+    hashes = []
+    for path in hash_files:
+        digest = capture(f"sha256sum '{path}' | cut -d' ' -f1")
+        hashes.append(f"{digest}  {path}")
     base64.b64decode(status, validate=True)
     check(len(hashes) == 5, f"unexpected state hashes: {hashes}")
     return {"head": head, "status": status, "hashes": hashes}
@@ -457,6 +459,11 @@ def main():
 
         log("exact checkpoint state and stateless Pod replacement")
         prompt(central, workspace, session, "E2E_CHECKPOINT")
+        wait_until(
+            "checkpoint fixture mutations",
+            lambda: file_text(central, workspace, "staged-new.txt").strip() == "staged-new",
+            timeout=30,
+        )
         before = state_snapshot(central, workspace, session)
         check(base64.b64decode(before["status"]), "checkpoint fixture unexpectedly has clean status")
         messages_before = request(central, routed_path(f"/session/{session}/message"))[2]
@@ -491,6 +498,11 @@ def main():
             return status == 200
 
         wait_until("session replay after workspace resume", child_session_ready, timeout=90)
+        wait_until(
+            "restored checkpoint files",
+            lambda: file_text(central, workspace, "staged-new.txt").strip() == "staged-new",
+            timeout=30,
+        )
         after = state_snapshot(central, workspace, session)
         check(after == before, f"restored Git state differs\nbefore={before}\nafter={after}")
         messages_after = request(central, routed_path(f"/session/{session}/message"))[2]
@@ -574,7 +586,11 @@ def main():
             interval=2,
         )
         check(crash_after["restartCount"] > crash_before["restartCount"], "child crash did not increment restart count")
-        check("fixture tracked content" in file_text(central, workspace, "tracked.txt"), "session did not reconnect after child crash")
+        wait_until(
+            "session reconnect after child crash",
+            lambda: "fixture tracked content" in file_text(central, workspace, "tracked.txt"),
+            timeout=90,
+        )
 
         log("abrupt Pod loss and checkpoint recovery")
         abrupt_uid = pod_for(workspace)["metadata"]["uid"]
@@ -588,8 +604,15 @@ def main():
             "--force",
             "--wait=true",
         )
-        request(gateway, f"/v1/workspaces/{workspace}/ensure", method="POST")
-        abrupt_replacement = pod_for(workspace)
+        abrupt_replacement = wait_until(
+            "automatic sandbox reconciliation",
+            lambda: (
+                candidate
+                if (candidate := pod_for(workspace))["metadata"]["uid"] != abrupt_uid
+                else None
+            ),
+            timeout=90,
+        )
         check(abrupt_replacement["metadata"]["uid"] != abrupt_uid, "abrupt recovery reused the deleted Pod")
         wait_until(
             "session reconnect after abrupt Pod loss",
@@ -619,6 +642,37 @@ def main():
         request(gateway, f"/v1/workspaces/{workspace}/checkpoints/latest", expected=(404,))
         check(request(gateway, "/v1/projects/fixture/env-profile/meta")[2]["sha256"] == env_meta["sha256"], "workspace delete removed environment profile")
         request(gateway, f"/v1/workspaces/{workspace_b}", method="DELETE", expected=(204,))
+
+        log("invalid environment profile fails closed")
+        invalid_profile = b"export SHOULD_NOT_EXIST=private-profile-value\nexit 42\n"
+        invalid_meta = request(
+            gateway,
+            "/v1/projects/fixture/env-profile",
+            method="PUT",
+            data=invalid_profile,
+        )[2]
+        check("private-profile-value" not in json.dumps(invalid_meta), "invalid profile API leaked secret content")
+        invalid_workspace = "wrk_invalid_environment"
+        request(
+            gateway,
+            "/v1/workspaces",
+            method="POST",
+            payload={
+                "workspaceId": invalid_workspace,
+                "projectKey": "fixture",
+                "gitRef": "main",
+                "owner": "e2e@example.test",
+                "upstreamEnvironment": {"OPENCODE_AUTH_CONTENT": "{}"},
+            },
+            expected=(503,),
+            timeout=60,
+        )
+        invalid_record = workspace_record(gateway, invalid_workspace)
+        check(invalid_record["state"] == "error", f"invalid environment did not enter error: {invalid_record}")
+        error_text = invalid_record.get("error") or ""
+        check("environment evaluation failed" in error_text, f"invalid environment error is not actionable: {error_text}")
+        check("private-profile-value" not in error_text, "invalid environment error leaked profile content")
+        request(gateway, f"/v1/workspaces/{invalid_workspace}", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile/meta", expected=(404,))
         check(session_b != session, "concurrent sessions unexpectedly share identity")

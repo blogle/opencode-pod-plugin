@@ -11,6 +11,7 @@ use reqwest::Client;
 use serde::Serialize;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
@@ -89,6 +90,7 @@ pub async fn run(config: SupervisorConfig) -> Result<()> {
     validate_config(&config)?;
     check_binary_version(&config).await?;
     authorize_managed_envrc(&config).await?;
+    check_project_environment(&config).await?;
 
     let status = Arc::new(RwLock::new(RuntimeStatus {
         expected_version: config.expected_version.clone(),
@@ -228,6 +230,7 @@ pub async fn run(config: SupervisorConfig) -> Result<()> {
         if !terminating {
             sleep(Duration::from_secs(1)).await;
             authorize_managed_envrc(&config).await?;
+            check_project_environment(&config).await?;
         }
     }
 
@@ -381,6 +384,24 @@ async fn authorize_managed_envrc(config: &SupervisorConfig) -> Result<()> {
     Ok(())
 }
 
+async fn check_project_environment(config: &SupervisorConfig) -> Result<()> {
+    let status = Command::new(&config.direnv)
+        .arg("exec")
+        .arg(&config.workspace)
+        .arg(&config.opencode)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .context("evaluate project environment")?;
+    ensure!(
+        status.success(),
+        "project environment evaluation failed; check the managed .envrc or use a compatible project environment mode"
+    );
+    Ok(())
+}
+
 fn validate_config(config: &SupervisorConfig) -> Result<()> {
     ensure!(
         !config.control_token.is_empty(),
@@ -527,7 +548,35 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{control_listen_allowed, parse_version};
+    use super::{
+        check_project_environment, control_listen_allowed, parse_version, SupervisorConfig,
+    };
+    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
+    #[tokio::test]
+    async fn rejects_invalid_project_environment_without_leaking_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let direnv = directory.path().join("direnv");
+        std::fs::write(
+            &direnv,
+            "#!/bin/sh\necho private-profile-value >&2\nexit 42\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&direnv).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&direnv, permissions).unwrap();
+        let config = SupervisorConfig {
+            workspace: directory.path().to_owned(),
+            opencode: PathBuf::from("/bin/true"),
+            direnv,
+            ..SupervisorConfig::default()
+        };
+
+        let error = check_project_environment(&config).await.unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("project environment evaluation failed"));
+        assert!(!message.contains("private-profile-value"));
+    }
 
     #[test]
     fn parses_supported_version_outputs() {

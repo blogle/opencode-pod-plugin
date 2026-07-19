@@ -49,6 +49,7 @@ async fn main() -> Result<()> {
 
     let api_state = state.clone();
     tokio::spawn(lifecycle::run_idle_reconciler(state.clone()));
+    tokio::spawn(lifecycle::run_workspace_reconciler(state.clone()));
     tokio::try_join!(
         async {
             axum::serve(api_listener, api::router(api_state))

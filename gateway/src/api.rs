@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use anyhow::Context;
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
@@ -137,6 +136,8 @@ struct CreateRequest {
 struct WorkspaceResponse {
     workspace_id: String,
     state: WorkspaceState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     target: TargetResponse,
 }
 
@@ -151,6 +152,7 @@ fn workspace_response(state: &AppState, workspace: Workspace) -> WorkspaceRespon
     WorkspaceResponse {
         workspace_id: workspace.id,
         state: workspace.state,
+        error: workspace.error,
         target: TargetResponse {
             url: format!(
                 "http://{}.{}.svc.cluster.local:{}",
@@ -312,9 +314,9 @@ async fn ui_resume(
     Path(id): Path<String>,
 ) -> Result<Redirect, UiError> {
     owned_workspace(&state, &headers, &id, false).map_err(ui_from_api)?;
-    ensure_workspace_record(&state, &id)
+    crate::lifecycle::ensure_workspace(&state, &id, true)
         .await
-        .map_err(ui_from_api)?;
+        .map_err(|error| UiError(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
     let session = state
         .store
         .session_id(&id)
@@ -552,76 +554,29 @@ async fn ensure_workspace(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
-    owned_workspace(&state, &headers, &id, false)?;
-    let workspace = ensure_workspace_record(&state, &id).await?;
-    Ok(Json(workspace_response(&state, workspace)))
-}
-
-async fn ensure_workspace_record(state: &AppState, id: &str) -> Result<Workspace, ApiError> {
-    let _operation = state.operations.lock().await;
-    let workspace = state
-        .store
-        .workspace(id)
-        .map_err(ApiError::internal)?
-        .ok_or_else(ApiError::not_found)?;
-    let workspace = match workspace.state {
-        WorkspaceState::Suspended | WorkspaceState::Error => state
-            .store
-            .transition(id, WorkspaceState::Resuming, None)
-            .map_err(ApiError::bad)?,
-        WorkspaceState::Running | WorkspaceState::Provisioning | WorkspaceState::Resuming => {
-            workspace
-        }
-        state_value => {
-            return Err(ApiError(
-                StatusCode::CONFLICT,
-                format!("cannot ensure workspace in {state_value} state"),
-            ))
-        }
-    };
-    let project = state
-        .config
-        .projects()
-        .map_err(ApiError::internal)?
-        .get(&workspace.project_key)
-        .cloned()
-        .context("registered project disappeared")
-        .map_err(ApiError::internal)?;
-    let has_profile = state
-        .store
-        .env_profile(&workspace.owner, &workspace.project_key)
-        .map_err(ApiError::internal)?
-        .is_some();
-    match state.k8s.provision(&workspace, &project, has_profile).await {
-        Ok(result) => {
-            state
-                .store
-                .record_image_digest(id, &result.image_digest)
-                .map_err(ApiError::internal)?;
-            let workspace = if workspace.state == WorkspaceState::Running {
-                state
-                    .store
-                    .workspace(id)
-                    .map_err(ApiError::internal)?
-                    .unwrap()
-            } else {
-                state
-                    .store
-                    .transition(id, WorkspaceState::Running, None)
-                    .map_err(ApiError::internal)?
-            };
-            Ok(workspace)
-        }
-        Err(error) => {
-            let _ = state
-                .store
-                .transition(id, WorkspaceState::Error, Some(&error.to_string()));
-            Err(ApiError(
+    let current = owned_workspace(&state, &headers, &id, false)?;
+    if !matches!(
+        current.state,
+        WorkspaceState::Suspended
+            | WorkspaceState::Error
+            | WorkspaceState::Running
+            | WorkspaceState::Provisioning
+            | WorkspaceState::Resuming
+    ) {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            format!("cannot ensure workspace in {} state", current.state),
+        ));
+    }
+    let workspace = crate::lifecycle::ensure_workspace(&state, &id, true)
+        .await
+        .map_err(|_| {
+            ApiError(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "workspace resume failed".into(),
-            ))
-        }
-    }
+            )
+        })?;
+    Ok(Json(workspace_response(&state, workspace)))
 }
 
 async fn suspend_workspace(
@@ -987,6 +942,9 @@ mod tests {
         }
         async fn delete(&self, _: &Workspace) -> anyhow::Result<()> {
             Ok(())
+        }
+        async fn sandbox_exists(&self, _: &Workspace) -> anyhow::Result<bool> {
+            Ok(true)
         }
         async fn put_env_profile(&self, _: &str, _: &str, _: &[u8]) -> anyhow::Result<()> {
             Ok(())

@@ -45,6 +45,7 @@ pub trait Orchestrator: Send + Sync {
     ) -> Result<Provisioned>;
     async fn suspend(&self, workspace: &Workspace) -> Result<()>;
     async fn delete(&self, workspace: &Workspace) -> Result<()>;
+    async fn sandbox_exists(&self, workspace: &Workspace) -> Result<bool>;
     async fn put_env_profile(&self, owner: &str, project: &str, content: &[u8]) -> Result<()>;
     async fn delete_env_profile(&self, owner: &str, project: &str) -> Result<()>;
     async fn ready_pod_ip(&self, preview_key: &str) -> Option<String>;
@@ -178,11 +179,43 @@ impl Kubernetes {
                             image_digest: reusable_image_digest(&workspace.image_ref, &image_id)?,
                         });
                     }
+                    if let Some(failure) = workspace_startup_failure(&status) {
+                        bail!("{failure}");
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+}
+
+fn workspace_startup_failure(status: &k8s_openapi::api::core::v1::PodStatus) -> Option<String> {
+    let terminated = status
+        .container_statuses
+        .as_deref()?
+        .iter()
+        .find(|container| container.name == "workspace")?
+        .state
+        .as_ref()?
+        .terminated
+        .as_ref()?;
+    if terminated.exit_code == 0 {
+        return None;
+    }
+    let detail = terminated.message.as_deref().unwrap_or_default();
+    if detail.contains("project environment evaluation failed") {
+        return Some(
+            "project environment evaluation failed; check .envrc or select a compatible environment mode"
+                .into(),
+        );
+    }
+    Some(format!(
+        "sandbox workspace container exited before readiness ({})",
+        terminated
+            .reason
+            .as_deref()
+            .unwrap_or("unknown startup error")
+    ))
 }
 
 async fn request_supervisor_checkpoint(url: &str, token: &str, timeout: Duration) -> Result<()> {
@@ -258,8 +291,24 @@ impl Orchestrator for Kubernetes {
         Ok(())
     }
 
+    async fn sandbox_exists(&self, workspace: &Workspace) -> Result<bool> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.config.namespace);
+        Ok(pods.get_opt(&pod_name(workspace)).await?.is_some())
+    }
+
     async fn delete(&self, workspace: &Workspace) -> Result<()> {
-        self.suspend(workspace).await?;
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.config.namespace);
+        let name = pod_name(workspace);
+        if pods.get_opt(&name).await?.is_some() {
+            pods.delete(&name, &DeleteParams::default()).await?;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+            while pods.get_opt(&name).await?.is_some() {
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("sandbox Pod deletion timed out");
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
         let services: Api<Service> = Api::namespaced(self.client.clone(), &self.config.namespace);
         let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.config.namespace);
         if services.get_opt(&workspace.service_name).await?.is_some() {
@@ -541,7 +590,7 @@ chmod -R a+rwX /workspace /run/opencode"#
         "containers":[
           {"name":"workspace","image":image,"imagePullPolicy":"IfNotPresent","command":["/opt/opencode/bin/supervisor"],"workingDir":"/workspace","ports":[{"name":"opencode","containerPort":OPENCODE_PORT}],"env":[
             {"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"OPENCODE_EXPERIMENTAL_WORKSPACES","value":"true"},{"name":"OPENCODE_CONFIG_DIR","value":"/opt/opencode/config"},{"name":"OPENCODE_SERVER_USERNAME","value":"opencode"},{"name":"OPENCODE_SERVER_PASSWORD","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"password"}}},{"name":"OPENCODE_AUTH_CONTENT","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"opencode-auth-content"}}},{"name":"OPENCODE_EXPECTED_VERSION","value":config.opencode.version},{"name":"OPENCODE_GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"runtime-token"}}},{"name":"OPENCODE_BASE_DOMAIN","value":config.base_domain},{"name":"OPENCODE_SUPERVISOR_ENDPOINT","value":format!("http://127.0.0.1:{SUPERVISOR_PORT}")},{"name":"OPENCODE_CHECKPOINT_ENDPOINT","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}")},{"name":"OPENCODE_CHECKPOINT_INTERVAL_SECONDS","value":config.checkpoint.periodic_seconds.to_string()},{"name":"OPENCODE_DIRENV_PATH","value":"/opt/opencode/bin/direnv"},{"name":"SUPERVISOR_LISTEN","value":format!("0.0.0.0:{SUPERVISOR_PORT}")},{"name":"SUPERVISOR_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"CHECKPOINT_SIDECAR_URL","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}/checkpoint")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"OPENCODE_NIX_FLAKE","value":nix_flake}
-          ],"volumeMounts":workspace_mounts,"resources":{"requests":{"cpu":project.resources.requests.cpu,"memory":project.resources.requests.memory},"limits":{"cpu":project.resources.limits.cpu,"memory":project.resources.limits.memory}},"readinessProbe":{"tcpSocket":{"port":OPENCODE_PORT},"periodSeconds":2,"failureThreshold":150},"securityContext":security}
+          ],"volumeMounts":workspace_mounts,"resources":{"requests":{"cpu":project.resources.requests.cpu,"memory":project.resources.requests.memory},"limits":{"cpu":project.resources.limits.cpu,"memory":project.resources.limits.memory}},"readinessProbe":{"tcpSocket":{"port":OPENCODE_PORT},"periodSeconds":2,"failureThreshold":150},"terminationMessagePolicy":"FallbackToLogsOnError","securityContext":security}
         ]
       }
     }))
@@ -558,6 +607,29 @@ mod tests {
         state::WorkspaceState,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn reports_sanitized_environment_startup_failure() {
+        let status = serde_json::from_value(json!({
+            "containerStatuses": [{
+                "name": "workspace",
+                "image": "demo:dev",
+                "imageID": "",
+                "ready": false,
+                "restartCount": 0,
+                "state": {"terminated": {
+                    "exitCode": 1,
+                    "message": "project environment evaluation failed; secret output omitted",
+                    "reason": "Error"
+                }}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(
+            workspace_startup_failure(&status).as_deref(),
+            Some("project environment evaluation failed; check .envrc or select a compatible environment mode")
+        );
+    }
 
     #[test]
     fn pod_is_ephemeral_and_hardened() {

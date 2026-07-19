@@ -151,6 +151,17 @@ impl Store {
             .map_err(Into::into)
     }
 
+    pub fn all_workspaces(&self) -> Result<Vec<Workspace>> {
+        let connection = self.0.lock().unwrap();
+        let mut statement = connection.prepare(&format!(
+            "{} WHERE state != 'deleted' ORDER BY updated_at DESC",
+            SELECT_WORKSPACE
+        ))?;
+        let rows = statement.query_map([], map_workspace)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn idle_running(&self, idle_seconds: u64) -> Result<Vec<Workspace>> {
         let connection = self.0.lock().unwrap();
         let threshold = format!("-{idle_seconds} seconds");
@@ -464,5 +475,27 @@ mod tests {
             .unwrap();
         assert_eq!(store.idle_running(3600).unwrap()[0].id, "wrk_1");
         assert!(store.idle_running(10_000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn lists_all_non_deleted_workspaces_without_owner_scope() {
+        let store = Store::open_memory().unwrap();
+        store.insert_workspace(&workspace()).unwrap();
+        let mut other = workspace();
+        other.id = "wrk_2".into();
+        other.owner = "other".into();
+        other.service_name = "workspace-two".into();
+        other.preview_key = "two".into();
+        store.insert_workspace(&other).unwrap();
+        store
+            .transition("wrk_2", WorkspaceState::Deleting, None)
+            .unwrap();
+        store
+            .transition("wrk_2", WorkspaceState::Deleted, None)
+            .unwrap();
+
+        let workspaces = store.all_workspaces().unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].id, "wrk_1");
     }
 }
