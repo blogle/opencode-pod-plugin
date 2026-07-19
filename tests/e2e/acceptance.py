@@ -576,6 +576,32 @@ def main():
         check(crash_after["restartCount"] > crash_before["restartCount"], "child crash did not increment restart count")
         check("fixture tracked content" in file_text(central, workspace, "tracked.txt"), "session did not reconnect after child crash")
 
+        log("abrupt Pod loss and checkpoint recovery")
+        abrupt_uid = pod_for(workspace)["metadata"]["uid"]
+        kubectl(
+            "-n",
+            "opencode-sandboxes",
+            "delete",
+            "pod",
+            current_pod,
+            "--grace-period=0",
+            "--force",
+            "--wait=true",
+        )
+        request(gateway, f"/v1/workspaces/{workspace}/ensure", method="POST")
+        abrupt_replacement = pod_for(workspace)
+        check(abrupt_replacement["metadata"]["uid"] != abrupt_uid, "abrupt recovery reused the deleted Pod")
+        wait_until(
+            "session reconnect after abrupt Pod loss",
+            lambda: file_text(central, workspace, "untracked.txt").strip() == "untracked",
+            timeout=90,
+        )
+        check(
+            request(central, routed_path(f"/session/{session}/message"))[2][: len(messages_before)]
+            == messages_before,
+            "abrupt Pod loss changed central session history",
+        )
+
         log("failure responses and permanent cleanup")
         request(
             gateway,
