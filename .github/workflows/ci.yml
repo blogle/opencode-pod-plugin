@@ -7,66 +7,45 @@ on:
     branches: [master]
 
 jobs:
-  router-lint-test:
-    name: Router (Rust)
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: router
-
-      - name: Format check
-        run: cargo fmt --check
-        working-directory: router
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-        working-directory: router
-
-      - name: Test
-        run: cargo test
-        working-directory: router
-
-  plugin-lint-test:
-    name: Plugin (TypeScript)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-          cache-dependency-path: plugin/package-lock.json
+          cache-dependency-path: |
+            plugin/package-lock.json
+            runtime-plugin/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            gateway
+            supervisor
+      - uses: extractions/setup-just@v2
 
-      - name: Install dependencies
-        run: npm ci
-        working-directory: plugin
-
-      - name: Type check
-        run: npx tsc --noEmit
-        working-directory: plugin
-
+      - name: Install TypeScript dependencies
+        run: |
+          npm ci --prefix plugin
+          npm ci --prefix runtime-plugin
       - name: Test
-        run: npm test
-        working-directory: plugin
+        run: just test
+      - name: Static checks
+        run: just check
 
-  validate-manifests:
-    name: Validate Kustomize manifests
+  manifests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install kustomize
-        uses: imranismail/setup-kustomize@v2
+      - uses: imranismail/setup-kustomize@v2
         with:
           kustomize-version: "5.4.1"
-
-      - name: Validate kustomize build
-        run: kustomize build deploy
+      - name: Render production base
+        run: kustomize build deploy/base >/dev/null
+      - name: Render kind overlay
+        run: kustomize build deploy/kind >/dev/null
