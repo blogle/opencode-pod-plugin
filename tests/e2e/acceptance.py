@@ -552,6 +552,25 @@ def main():
         )
         check(pod_for(workspace_b)["metadata"]["uid"] != pod_for(workspace)["metadata"]["uid"], "workspaces share a Pod")
 
+        log("concurrent preview routing isolation")
+        prompt(central, workspace_b, session_b, "E2E_PREVIEW")
+        preview_host_a = preview_host
+        preview_host_b = f"{workspace_record(gateway, workspace_b)['target']['url'].split('//', 1)[1].split('.', 1)[0].removeprefix('workspace-')}-18080.test.invalid"
+        wait_until(
+            "workspace B preview server",
+            lambda: request(
+                preview_forward.url,
+                "/fixture-health",
+                headers={"Host": preview_host_b},
+                expected=(200, 502),
+            )[2],
+            timeout=30,
+        )
+        body_a = request(preview_forward.url, "/fixture-health", headers={"Host": preview_host_a}, expected=(200,))[2]
+        body_b = request(preview_forward.url, "/fixture-health", headers={"Host": preview_host_b}, expected=(200,))[2]
+        check(body_a == b"fixture-preview-ok\n", f"workspace A preview returned wrong body: {body_a!r}")
+        check(body_b == b"fixture-preview-ok\n", f"workspace B preview returned wrong body: {body_b!r}")
+
         log("gateway restart recovery and child crash recovery")
         gateway_forward.close()
         kubectl("-n", "opencode-system", "delete", "pod", "-l", "app=gateway", "--wait=true")
@@ -747,6 +766,34 @@ def main():
         request(gateway, f"/v1/workspaces/{invalid_workspace}", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile/meta", expected=(404,))
+
+        log("corrupted checkpoint refuses resume")
+        corrupt_session, corrupt_workspace = launch(gateway, central, "kind rev2 corrupt")
+        prompt(central, corrupt_workspace, corrupt_session, "E2E_STOCK_TOOL")
+        corrupt_pod_name = pod_for(corrupt_workspace)["metadata"]["name"]
+        request(gateway, f"/v1/workspaces/{corrupt_workspace}/suspend", method="POST")
+        wait_until(
+            "corrupt checkpoint Pod deletion",
+            lambda: resource_absent("opencode-sandboxes", "pod", corrupt_pod_name),
+            timeout=90,
+        )
+        import hashlib
+        checkpoint_meta = request(gateway, f"/v1/workspaces/{corrupt_workspace}/checkpoints/latest")[2]
+        bundle_sha = checkpoint_meta["bundleSha256"]
+        workspace_hash = hashlib.sha256(corrupt_workspace.encode()).hexdigest()
+        blob_path = f"/data/checkpoints/{workspace_hash}/{bundle_sha}.bundle"
+        gateway_pod = kubectl("-n", "opencode-system", "get", "pod", "-l", "app=gateway", "-o", "jsonpath={.items[0].metadata.name}")
+        kubectl(
+            "-n", "opencode-system", "exec", gateway_pod, "--",
+            "sh", "-c",
+            f"printf 'CORRUPTED' | dd of='{blob_path}' bs=1 count=9 conv=notrunc 2>/dev/null",
+        )
+        request(gateway, f"/v1/workspaces/{corrupt_workspace}/ensure", method="POST", expected=(503,), timeout=60)
+        corrupt_record = workspace_record(gateway, corrupt_workspace)
+        check(corrupt_record["state"] == "error", f"corrupted checkpoint did not enter error: {corrupt_record}")
+        check(resource_absent("opencode-sandboxes", "pod", corrupt_pod_name), "corrupt checkpoint workspace has a running Pod")
+        request(gateway, f"/v1/workspaces/{corrupt_workspace}", method="DELETE", expected=(204,))
+
         check(session_b != session, "concurrent sessions unexpectedly share identity")
         log("all deterministic kind acceptance checks passed")
     finally:

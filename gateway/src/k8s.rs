@@ -182,6 +182,9 @@ impl Kubernetes {
                     if let Some(failure) = workspace_startup_failure(&status) {
                         bail!("{failure}");
                     }
+                    if let Some(failure) = init_container_failure(&status) {
+                        bail!("{failure}");
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -215,6 +218,33 @@ fn workspace_startup_failure(status: &k8s_openapi::api::core::v1::PodStatus) -> 
             .reason
             .as_deref()
             .unwrap_or("unknown startup error")
+    ))
+}
+
+fn init_container_failure(status: &k8s_openapi::api::core::v1::PodStatus) -> Option<String> {
+    let terminated = status
+        .init_container_statuses
+        .as_deref()?
+        .iter()
+        .find(|container| {
+            container
+                .state
+                .as_ref()
+                .and_then(|state| state.terminated.as_ref())
+                .is_some_and(|t| t.exit_code != 0)
+        })?
+        .state
+        .as_ref()?
+        .terminated
+        .as_ref()?;
+    Some(format!(
+        "sandbox init container '{}' exited with code {} ({})",
+        terminated.reason.as_deref().unwrap_or("Init:Error"),
+        terminated.exit_code,
+        terminated
+            .message
+            .as_deref()
+            .unwrap_or("no details available"),
     ))
 }
 
