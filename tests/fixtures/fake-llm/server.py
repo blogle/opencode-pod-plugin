@@ -13,6 +13,7 @@ COMMANDS = {
     "E2E_PREVIEW": "nohup python3 server.py 18080 >/tmp/fixture-preview.log 2>&1 &",
     "E2E_ISOLATION_A": "printf 'workspace-a-only\\n' > isolation-a.txt",
     "E2E_CONTINUE": "test -f untracked.txt && printf 'continued-session\\n' > continued.txt",
+    "E2E_NIX_CHANGE": "sed -i 's/NIX_FIXTURE_VERSION = \"one\"/NIX_FIXTURE_VERSION = \"two\"/' flake.nix",
 }
 
 

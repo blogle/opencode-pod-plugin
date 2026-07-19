@@ -18,6 +18,7 @@ KUBECONFIG_PREPARED=0
 readonly -a IMAGES=(
   "ocws-e2e-gateway:rev2"
   "ocws-e2e-runtime:rev2"
+  "ocws-e2e-nix:rev2"
   "ocws-e2e-central:rev2"
   "ocws-e2e-project:rev2"
   "ocws-e2e-git:rev2"
@@ -103,6 +104,8 @@ else
   docker build --pull=false --tag ocws-e2e-gateway:rev2 --file "$ROOT/gateway/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-central:rev2 --file "$ROOT/runtime/central.Dockerfile" "$ROOT"
   docker build --pull=false --build-arg OPENCODE_IMAGE=ocws-e2e-central:rev2 --tag ocws-e2e-runtime:rev2 --file "$ROOT/runtime/Dockerfile" "$ROOT"
+  docker build --pull=false --tag ocws-e2e-generic-nix:rev2 --file "$ROOT/runtime/generic-nix.Dockerfile" "$ROOT"
+  docker build --pull=false --build-arg GENERIC_NIX_IMAGE=ocws-e2e-generic-nix:rev2 --tag ocws-e2e-nix:rev2 --file "$ROOT/tests/fixtures/nix-project/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-project:rev2 --file "$ROOT/tests/fixtures/project-dev-image/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-git:rev2 --file "$ROOT/tests/fixtures/git-server/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-llm:rev2 --file "$ROOT/tests/fixtures/fake-llm/Dockerfile" "$ROOT"

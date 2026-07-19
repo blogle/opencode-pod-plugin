@@ -64,7 +64,7 @@ data:
       centralUrl: http://central.opencode-system.svc.cluster.local:4096
     runtime:
       image: ocws-e2e-runtime:rev2
-      genericNixImage: ocws-e2e-runtime:rev2
+      genericNixImage: ocws-e2e-nix:rev2
       gatewayUrl: http://gateway.opencode-system.svc.cluster.local:8080
     checkpoint:
       path: /data/checkpoints
@@ -91,6 +91,16 @@ data:
         resources:
           requests: { cpu: 50m, memory: 128Mi }
           limits: { cpu: "1", memory: 1Gi }
+      fixture-nix:
+        name: Kind Nix Fixture
+        repository: http://git-server.opencode-system.svc.cluster.local:8000/fixture.git
+        defaultRef: main
+        environment:
+          mode: nix
+          flake: .#default
+        resources:
+          requests: { cpu: 100m, memory: 256Mi }
+          limits: { cpu: "2", memory: 2Gi }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -193,7 +203,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-ec"]
           args:
-            - until git clone http://git-server.opencode-system.svc.cluster.local:8000/fixture.git /catalog/fixture; do rm -rf /catalog/fixture; sleep 1; done
+            - until git clone http://git-server.opencode-system.svc.cluster.local:8000/fixture.git /catalog/fixture; do rm -rf /catalog/fixture; sleep 1; done; cp -a /catalog/fixture /catalog/fixture-nix
           volumeMounts: [{ name: catalog, mountPath: /catalog }]
       containers:
         - name: central

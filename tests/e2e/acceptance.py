@@ -248,12 +248,12 @@ def pod_for(workspace):
     fail(f"expected one Pod for workspace {workspace}")
 
 
-def launch(gateway, central, title):
+def launch(gateway, central, title, project_key="fixture"):
     status, headers, _ = request(
         gateway,
         "/v1/launch",
         method="POST",
-        payload={"projectKey": "fixture", "gitRef": "main", "sessionName": title},
+        payload={"projectKey": project_key, "gitRef": "main", "sessionName": title},
         expected=(303,),
     )
     check(status == 303, "launch did not redirect")
@@ -303,7 +303,10 @@ def main():
 
         log("gateway APIs and environment profile")
         projects = request(gateway, "/v1/projects")[2]
-        check([project["key"] for project in projects] == ["fixture"], "fixture project is not registered")
+        check(
+            [project["key"] for project in projects] == ["fixture", "fixture-nix"],
+            "fixture projects are not registered",
+        )
         profile_one = b"export FIXTURE_PRIVATE=profile-one\n"
         profile_meta = request(
             gateway, "/v1/projects/fixture/env-profile", method="PUT", data=profile_one
@@ -625,6 +628,74 @@ def main():
             "abrupt Pod loss changed central session history",
         )
 
+        log("generic Nix environment refresh and idle restart")
+        nix_session, nix_workspace = launch(
+            gateway, central, "kind rev2 nix", project_key="fixture-nix"
+        )
+        nix_pod = pod_for(nix_workspace)
+        nix_pod_uid = nix_pod["metadata"]["uid"]
+        nix_pod_name = nix_pod["metadata"]["name"]
+        nix_secret = next(
+            volume["secret"]["secretName"]
+            for volume in nix_pod["spec"]["volumes"]
+            if volume["name"] == "runtime-auth"
+        )
+        nix_token = base64.b64decode(
+            kubectl(
+                "-n",
+                "opencode-sandboxes",
+                "get",
+                "secret",
+                nix_secret,
+                "-o",
+                "json",
+                json_output=True,
+            )["data"]["runtime-token"]
+        ).decode()
+        nix_before = supervisor_status(nix_pod_name, nix_token)
+
+        def nix_environment():
+            return shell(
+                central,
+                nix_workspace,
+                nix_session,
+                "printf 'NIX_DYNAMIC=%s\\nNIX_CHILD=%s\\n' \"$NIX_FIXTURE_VERSION\" \"$NIX_CHILD_START_VERSION\"",
+            )
+
+        initial_nix = wait_until(
+            "initial Nix development environment",
+            lambda: (value if "NIX_DYNAMIC=one" in (value := nix_environment()) else None),
+            timeout=90,
+        )
+        check("NIX_CHILD=one" in initial_nix, f"child did not start in Nix environment: {initial_nix}")
+        prompt(central, nix_workspace, nix_session, "E2E_NIX_CHANGE")
+        dynamic_nix = wait_until(
+            "live Nix flake refresh",
+            lambda: (value if "NIX_DYNAMIC=two" in (value := nix_environment()) else None),
+            timeout=180,
+            interval=3,
+        )
+        check("NIX_DYNAMIC=two" in dynamic_nix, "new shell did not evaluate changed flake")
+        nix_after = wait_until(
+            "Nix child idle restart",
+            lambda: (
+                value
+                if (value := supervisor_status(nix_pod_name, nix_token)).get("ready")
+                and value.get("childPid") != nix_before.get("childPid")
+                else None
+            ),
+            timeout=120,
+            interval=2,
+        )
+        check(nix_after["restartCount"] > nix_before["restartCount"], "Nix change did not restart child")
+        check(pod_for(nix_workspace)["metadata"]["uid"] == nix_pod_uid, "Nix change replaced Pod")
+        wait_until(
+            "restarted child inherits changed Nix environment",
+            lambda: "NIX_CHILD=two" in nix_environment(),
+            timeout=90,
+            interval=3,
+        )
+
         log("failure responses and permanent cleanup")
         request(
             gateway,
@@ -642,6 +713,7 @@ def main():
         request(gateway, f"/v1/workspaces/{workspace}/checkpoints/latest", expected=(404,))
         check(request(gateway, "/v1/projects/fixture/env-profile/meta")[2]["sha256"] == env_meta["sha256"], "workspace delete removed environment profile")
         request(gateway, f"/v1/workspaces/{workspace_b}", method="DELETE", expected=(204,))
+        request(gateway, f"/v1/workspaces/{nix_workspace}", method="DELETE", expected=(204,))
 
         log("invalid environment profile fails closed")
         invalid_profile = b"export SHOULD_NOT_EXIST=private-profile-value\nexit 42\n"
