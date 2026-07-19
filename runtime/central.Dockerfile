@@ -1,5 +1,5 @@
-# The central binary is rebuilt at the exact pin to carry the narrow upstream
-# WebSocket target-auth compatibility patch. Child OpenCode remains unmodified.
+# Central and child share this exact-pin binary with narrow upstream workspace
+# compatibility patches required by OpenCode 1.18.3.
 FROM oven/bun:1.3.14-debian AS build
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates g++ git make python3 \
@@ -11,14 +11,17 @@ COPY runtime/upstream-websocket-auth.patch /tmp/upstream-websocket-auth.patch
 COPY runtime/upstream-workspace-warp.patch /tmp/upstream-workspace-warp.patch
 COPY runtime/upstream-workspace-timeout.patch /tmp/upstream-workspace-timeout.patch
 COPY runtime/upstream-child-session-directory.patch /tmp/upstream-child-session-directory.patch
+COPY runtime/upstream-workspace-reconnect.patch /tmp/upstream-workspace-reconnect.patch
 RUN git apply --check /tmp/upstream-websocket-auth.patch \
     && git apply --check /tmp/upstream-workspace-warp.patch \
     && git apply --check /tmp/upstream-workspace-timeout.patch \
     && git apply --check /tmp/upstream-child-session-directory.patch \
+    && git apply --check /tmp/upstream-workspace-reconnect.patch \
     && git apply /tmp/upstream-websocket-auth.patch \
     && git apply /tmp/upstream-workspace-warp.patch \
     && git apply /tmp/upstream-workspace-timeout.patch \
-    && git apply /tmp/upstream-child-session-directory.patch
+    && git apply /tmp/upstream-child-session-directory.patch \
+    && git apply /tmp/upstream-workspace-reconnect.patch
 RUN bun install --frozen-lockfile \
     && OPENCODE_VERSION=1.18.3 bun run --cwd packages/opencode build --single --skip-embed-web-ui --skip-install
 

@@ -130,6 +130,24 @@ grep -Fq 'event.seq === 0 && directory' \
 grep -Fq 'directory: envWorkspaceID' \
   "$checkout/packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts" || \
   die "child request directory routing patch is missing"
+grep -Fq 'projectID,' \
+  "$checkout/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts" || \
+  die "child replay project identity mapping is missing"
 pass "remote replay binds sessions to the child checkout directory"
+
+git -C "$checkout" reset --quiet --hard "$OPENCODE_COMMIT"
+git -C "$checkout" apply --check "$ROOT_DIR/runtime/upstream-workspace-reconnect.patch" || \
+  die "workspace sync reconnect patch no longer applies to pinned upstream"
+git -C "$checkout" apply "$ROOT_DIR/runtime/upstream-workspace-reconnect.patch"
+grep -Fq 'workspace sync disconnected' \
+  "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "workspace sync reconnect patch is missing"
+grep -Fq 'restoreWorkspaceSessions' \
+  "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "workspace session replay on reconnect is missing"
+grep -Fq 'return exists && connections.get(workspaceID)?.status === "connected"' \
+  "$checkout/packages/opencode/src/control-plane/workspace.ts" || \
+  die "workspace routing is admitted before reconnect completes"
+pass "workspace sync and sessions recover after child replacement"
 
 printf 'compat: static Phase 1 gate passed for OpenCode %s. This gate does not start central or child servers.\n' "$OPENCODE_VERSION"
