@@ -1,316 +1,79 @@
-# Cluster Setup
+# Production cluster setup
 
-## Prerequisites
+## Requirements
 
-- Kubernetes cluster (1.24+)
-- cert-manager for TLS certificates
-- Ingress controller (nginx-ingress, Traefik, or similar)
-- Wildcard DNS record pointing to the ingress controller
+- Kubernetes 1.29+ with `SidecarContainers` enabled; Kubernetes 1.33+ is
+  recommended because native sidecars are stable.
+- A CNI that enforces NetworkPolicy.
+- A default StorageClass with snapshot/backup support.
+- Wildcard DNS/TLS and an ingress or Gateway API implementation.
+- A trusted authentication proxy that strips client identity headers before
+  setting the configured identity header.
+- Access to immutable central, gateway, runtime, generic-Nix, and project image
+  references.
 
-## Important: Security Considerations
+## Install
 
-This system runs arbitrary code in sandbox pods. Before deploying:
-
-1. **Network Isolation**: Deploy behind a private network or auth proxy
-2. **Authentication**: Put an auth proxy in front of both OpenCode and the router
-3. **Resource Quotas**: Set appropriate ResourceQuotas and LimitRanges in the namespace
-4. **Pod Security**: The provided manifests include security contexts, but review them for your environment
-
-## DNS Configuration
-
-Configure wildcard DNS for sandbox subdomains:
-
-```
-*.opencode.example.com -> Ingress controller IP
-```
-
-For local development with k3s, you can use nip.io or sslip.io:
-
-```
-*.127.0.0.1.nip.io -> 127.0.0.1
-```
-
-## Certificate Management
-
-cert-manager ClusterIssuer for wildcard certs (DNS-01 challenge required for wildcards):
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com
-    privateKeySecretRef:
-      name: letsencrypt-prod
-    solvers:
-    - dns01:
-        cloudDNS:
-          project: my-gcp-project
-```
-
-## K3s Specific Setup
-
-K3s comes with Traefik pre-installed. To use it with this system:
-
-1. **Disable K3s Traefik** (optional, if you want nginx-ingress):
-   ```bash
-   curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
-   ```
-
-2. **Configure Traefik** (if using built-in Traefik):
-   - Traefik automatically handles wildcard TLS with cert-manager
-   - Create an IngressRoute or standard Ingress pointing to the router service
-
-3. **Service Type**: The default deployment uses ClusterIP. For K3s without a load balancer, you may need to:
-   - Change service.yaml to use `type: NodePort` or `type: LoadBalancer`
-   - Or install MetalLB for bare-metal clusters
-
-## Per-Controller Examples
-
-### nginx-ingress
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: sandbox-router
-  namespace: opencode-sandbox
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-  - hosts:
-    - "*.opencode.example.com"
-    secretName: opencode-wildcard-tls
-  rules:
-  - host: "*.opencode.example.com"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: opencode-k8s-sandbox-router
-            port:
-              number: 8080
-```
-
-### Traefik (K3s native)
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: sandbox-router
-  namespace: opencode-sandbox
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-  - hosts:
-    - "*.opencode.example.com"
-    secretName: opencode-wildcard-tls
-  rules:
-  - host: "*.opencode.example.com"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: opencode-k8s-sandbox-router
-            port:
-              number: 8080
-```
-
-## Auth Proxy Setup
-
-For production use, put an auth proxy in front:
-
-### Using oauth2-proxy
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: oauth2-proxy
-  namespace: opencode-sandbox
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: oauth2-proxy
-  template:
-    metadata:
-      labels:
-        app: oauth2-proxy
-    spec:
-      containers:
-      - name: oauth2-proxy
-        image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
-        args:
-        - --provider=google
-        - --email-domain=example.com
-        - --upstream=http://opencode-k8s-sandbox-router:8080
-        - --http-address=0.0.0.0:4180
-        env:
-        - name: OAUTH2_PROXY_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: oauth2-proxy
-              key: client-id
-        - name: OAUTH2_PROXY_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: oauth2-proxy
-              key: client-secret
-        - name: OAUTH2_PROXY_COOKIE_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: oauth2-proxy
-              key: cookie-secret
-        ports:
-        - containerPort: 4180
-```
-
-Then point your Ingress to the oauth2-proxy service instead of the router directly.
-
-## Deployment
-
-Apply the manifests:
+Create the internal adapter token outside Git before applying the manifests:
 
 ```bash
-kubectl apply -k deploy/
+kubectl create namespace opencode-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n opencode-system create secret generic adapter-internal-token \
+  --from-literal=token="$(openssl rand -hex 32)"
+kustomize build deploy/examples | kubectl apply -f -
 ```
 
-The base manifests create:
+Use a private Kustomize overlay to replace platform configuration, register
+projects, set wildcard hosts, and pin first-party/project images by digest.
+Manage the adapter token and any registry credentials with SealedSecrets, SOPS,
+or an external secret controller. The checked-in base intentionally has no
+credentials and no projects.
 
-- Router Deployment and Service
-- Router and plugin RBAC
-- `opencode-package-cache` PVC mounted by sandbox pods when `packageCache.claimName` is configured
+The current v1 checkout path supports repositories reachable without embedded
+credentials. For private Git or private project registries, supply a controlled
+organization overlay only after adding explicit deploy-key/imagePullSecret
+references; never place credentials in project YAML or environment profiles.
 
-The base manifests do not create:
+## Network and security checks
 
-- Wildcard Ingress or certificate
-- OpenCode server/plugin config
-- Attic or MinIO/S3 for Nix binary caching
+Verify both namespaces enforce the supplied default-deny policies and that only
+central can reach child OpenCode while gateway can reach preview and supervisor
+ports. Sandbox Pods must have no service-account token, hostPath, Docker socket,
+privileged mode, host network/PID, or added capabilities.
 
-The package cache PVC defaults to `ReadWriteMany` and `5Gi`. If your cluster does not have an RWX default StorageClass, patch `deploy/package-cache-pvc.yaml` to use your storage class, or use a single-node/local StorageClass and keep sandbox pods on that node.
+Apply Pod Security Admission labels appropriate for your project images and set
+ResourceQuota/LimitRange values in an organization overlay. The generated
+sandbox security context already drops capabilities, disables privilege
+escalation, uses RuntimeDefault seccomp, and applies configured requests/limits.
 
-## Plugin Config
+## Durable state, backup, and upgrades
 
-Minimal plugin config:
+Central and gateway each use one PVC. Gateway SQLite and its checkpoint directory
+must be backed up and restored as one unit. For a consistent backup:
 
-```json
-{
-  "namespace": "opencode-sandbox",
-  "sandboxImage": "opencode-sandbox:latest",
-  "repos": {
-    "dotfiles": "git@github.com:example/dotfiles.git"
-  },
-  "baseDomain": "opencode.example.com",
-  "packageCache": {
-    "claimName": "opencode-package-cache"
-  }
-}
-```
+1. prevent new launches;
+2. suspend active workspaces;
+3. scale central and gateway to zero;
+4. snapshot both PVCs in the same maintenance window;
+5. scale central, then gateway, back to one replica.
 
-Optional Nix binary cache config:
+Restore central first, then the complete gateway PVC, and validate `/readyz`,
+workspace records, and latest checkpoint metadata before admitting users. Test
+every application and SQLite schema upgrade on a restored snapshot. v1 supports
+one gateway replica and does not promise downgrade compatibility.
 
-```json
-{
-  "nixCache": {
-    "endpoint": "https://attic.example.com",
-    "cache": "opencode",
-    "publicKey": "opencode:base64key=",
-    "tokenSecretName": "attic-creds"
-  }
-}
-```
+## Operations
 
-Create the Attic token Secret in the sandbox namespace before enabling `nixCache`:
+Use workspace IDs to correlate gateway JSON logs, sandbox Pod labels, Services,
+Secrets, and checkpoint metadata. A workspace in `error` preserves a sanitized
+failure reason. Do not copy `.envrc`, authorization headers, Git credentials, or
+runtime passwords into tickets or logs.
+
+Run the exact local acceptance path before release:
 
 ```bash
-kubectl create secret generic attic-creds \
-  --namespace opencode-sandbox \
-  --from-literal=attic-token=eyJ...
-```
-
-`nixCache` intentionally trusts sandbox pods to write back to the shared Attic cache. Do not point laptops or CI at that cache unless you accept sandbox-written paths as trusted.
-
-Verify the deployment:
-
-```bash
-kubectl get pods -n opencode-sandbox
-kubectl get svc -n opencode-sandbox
-kubectl get ingress -n opencode-sandbox
-kubectl get pvc -n opencode-sandbox
-```
-
-## Testing
-
-1. Create a test pod with the sandbox label:
-   ```bash
-   kubectl run test-sandbox --image=nginx --namespace=opencode-sandbox \
-     --labels="opencode.dev/sandbox-id=abcd1234,app.kubernetes.io/managed-by=opencode-k8s-sandbox"
-   ```
-
-2. Verify the router can reach it:
-   ```bash
-   curl -H "Host: 80-abcd1234.opencode.example.com" http://router-service:8080
-   ```
-
-## Troubleshooting
-
-### Verify plugin loads
-
-Check that opencode discovers and loads the plugin at startup:
-
-```bash
-kubectl -n opencode logs deploy/opencode --all-containers --prefix | grep -i plugin
-```
-
-The plugin is loaded from `~/.config/opencode/plugins/k8s-sandbox.js` via auto-discovery. The init container rebuilds this file on every pod start from the git repo.
-
-Sandbox provisioning is driven by the plugin `event` subscriber. The plugin listens for `session.created` and `session.deleted` events and creates or tears down the sandbox from those events.
-
-### Verify plugin registers tools
-
-With debug logging enabled (`opencode serve --print-logs --log-level DEBUG`), check for plugin initialization errors:
-
-```bash
-kubectl -n opencode logs deploy/opencode -c opencode --tail=100
-```
-
-### Verify sandbox pods are created
-
-After creating a session, check for sandbox pods:
-
-```bash
-kubectl -n opencode get pods -l app.kubernetes.io/managed-by=opencode-k8s-sandbox
-```
-
-If no pods appear, check that:
-1. The plugin loaded without errors (see above)
-2. The service account has RBAC permissions to create pods
-3. The `SANDBOX_NAMESPACE` env var matches the target namespace
-
-### Verify RBAC
-
-```bash
-kubectl -n opencode auth can-i create pods \
-  --as system:serviceaccount:opencode:opencode-k8s-sandbox-plugin
-kubectl -n opencode auth can-i create pods/exec \
-  --as system:serviceaccount:opencode:opencode-k8s-sandbox-plugin
-```
-
-### Restart opencode to pick up plugin changes
-
-The plugin is loaded at startup. After any plugin code change, restart the deployment:
-
-```bash
-kubectl -n opencode rollout restart deploy/opencode
+nix develop --command just test
+nix develop --command just check
+nix develop --command just build
+nix develop --command just e2e
 ```

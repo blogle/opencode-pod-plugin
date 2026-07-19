@@ -1,93 +1,28 @@
-# Sandbox Image
+# Project images and runtime injection
 
-## Minimal Dockerfile
+An image-mode project supplies its ordinary Linux development image. It must
+provide a usable process environment and support the cluster architecture, but
+does not need OpenCode, Bun, direnv, Git checkpoint helpers, or platform code.
+The runtime init container copies those exact-pin platform binaries into a
+shared executable volume and the gateway overrides the project entrypoint with
+the injected supervisor.
 
-```dockerfile
-FROM rust:1.77-slim as builder
+The published runtime image is built from `runtime/Dockerfile`; central uses
+`runtime/central.Dockerfile`; the fallback Nix runner uses
+`runtime/generic-nix.Dockerfile`. Release automation publishes immutable commit
+tags for all three plus gateway. Production overlays should replace readable
+release tags with registry digests.
 
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+The tested project-image contract is Linux x86-64 with glibc-compatible injected
+binaries, writable `/workspace`, and `/bin/sh`. Distroless, non-Linux, or
+incompatible-libc images are unsupported; use the generic Nix runner or publish
+a compatible project development image.
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+For `mode: nix`, gateway chooses the generic Nix runner and synthesizes a
+broker-owned direnv entry for the configured flake output. New store paths are
+realized in the disposable sandbox. Configure a trusted binary cache such as
+Attic in the runner image or deployment environment for predictable cold starts.
 
-COPY --from=builder /app/target/release/opencode-sandbox /usr/local/bin/
-
-EXPOSE 8080
-CMD ["opencode-sandbox"]
-```
-
-## Image Requirements
-
-- Minimal base image (slim/debian-slim)
-- Non-root user for security
-- Health check endpoint exposed
-- Required tools pre-installed
-- When Nix caching is enabled: `attic-client` must be available on PATH
-
-## Building
-
-```bash
-docker build -t opencode-sandbox:latest .
-```
-
-## Testing Locally
-
-```bash
-docker run -p 8080:8080 opencode-sandbox:latest
-```
-
-## Nix Binary Caching (optional)
-
-The sandbox image includes `attic-client` for push/pull to an Attic binary cache.
-When `nixCache` is configured in the plugin, each sandbox pod:
-
-1. Gets a writable `/nix/store` (via `readOnlyRootFilesystem: false`)
-2. Configures Nix substituters to pull from the Attic cache + `cache.nixos.org`
-3. Runs `attic watch-store` in the background to push newly-built paths back
-
-### Setup
-
-1. Deploy an [Attic](https://docs.attic.rs) server (e.g. backed by MinIO/S3)
-2. Create a cache: `attic cache create opencode`
-3. Generate a push token: `atticadm make-token --sub sandbox --validity 1y --push opencode`
-4. Create a Kubernetes secret with the token:
-   ```bash
-   kubectl create secret generic attic-creds --from-literal=attic-token=eyJ...
-   ```
-5. Configure the plugin:
-   ```json
-   {
-     "nixCache": {
-       "endpoint": "https://attic.example.com",
-       "cache": "opencode",
-       "publicKey": "opencode:base64key=",
-       "tokenSecretName": "attic-creds"
-     }
-   }
-   ```
-
-### Tradeoffs
-
-- Every pod writes back to the shared cache directly (no warmup job)
-- Cache pollution is accepted: arbitrary code in sandboxes can push anything
-- This is safe when the cache is only trusted by sandbox pods, not laptops/CI
-- Future upgrade: add a warmup controller that pre-builds common dev shells
-
-## Package Manager Caching (optional)
-
-When `packageCache.claimName` is configured, sandbox pods mount the shared PVC at `/cache` and set:
-
-```text
-CARGO_HOME=/cache/cargo
-NPM_CONFIG_CACHE=/cache/npm
-PNPM_STORE_DIR=/cache/pnpm
-YARN_CACHE_FOLDER=/cache/yarn
-PIP_CACHE_DIR=/cache/pip
-UV_CACHE_DIR=/cache/uv
-```
-
-The base deployment includes `opencode-package-cache` as a 5Gi RWX PVC. Patch `deploy/package-cache-pvc.yaml` if your cluster needs a specific StorageClass or access mode.
+Project image tags may be mutable only at initial task creation. Kubernetes'
+resolved immutable digest is recorded and reused for every resume of that task.
+Do not use `latest`.
