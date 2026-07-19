@@ -130,10 +130,20 @@ impl CheckpointStorage {
     }
 
     pub async fn purge(&self, workspace_id: &str) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
         for path in self.store.checkpoint_paths(workspace_id)? {
-            let _ = tokio::fs::remove_file(path).await;
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(error).with_context(|| format!("remove checkpoint blob {path}"));
+                }
+            }
         }
-        let _ = tokio::fs::remove_dir(self.root.join(safe_component(workspace_id))).await;
+        let directory = self.root.join(safe_component(workspace_id));
+        if let Err(error) = tokio::fs::remove_dir_all(&directory).await {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(error).context("remove checkpoint workspace directory");
+            }
+        }
         self.store.delete_checkpoints(workspace_id)?;
         Ok(())
     }
@@ -204,5 +214,77 @@ mod tests {
             .unwrap();
         assert_eq!(storage.latest("wrk_1").unwrap(), Some(metadata));
         assert_eq!(storage.latest_blob("wrk_1").await.unwrap().unwrap(), bundle);
+    }
+
+    #[tokio::test]
+    async fn purge_removes_blobs_before_metadata() {
+        let directory = tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        store.insert_workspace(&fixture_workspace()).unwrap();
+        let storage = CheckpointStorage::new(directory.path(), store.clone()).unwrap();
+        let bundle = b"git bundle";
+        let metadata = fixture_metadata(bundle);
+
+        storage.put("wrk_1", metadata, bundle).await.unwrap();
+        let blob_path = store.latest_checkpoint("wrk_1").unwrap().unwrap().blob_path;
+        assert!(Path::new(&blob_path).exists());
+
+        storage.purge("wrk_1").await.unwrap();
+        assert!(!Path::new(&blob_path).exists());
+        assert!(storage.latest("wrk_1").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn purge_retains_metadata_when_blob_removal_fails() {
+        let directory = tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        store.insert_workspace(&fixture_workspace()).unwrap();
+        let storage = CheckpointStorage::new(directory.path(), store.clone()).unwrap();
+        let bundle = b"git bundle";
+        let metadata = fixture_metadata(bundle);
+
+        storage.put("wrk_1", metadata, bundle).await.unwrap();
+        let blob_path = store.latest_checkpoint("wrk_1").unwrap().unwrap().blob_path;
+        std::fs::remove_file(&blob_path).unwrap();
+        std::fs::create_dir(&blob_path).unwrap();
+
+        assert!(storage.purge("wrk_1").await.is_err());
+        assert!(storage.latest("wrk_1").unwrap().is_some());
+    }
+
+    fn fixture_metadata(bundle: &[u8]) -> CheckpointMetadata {
+        CheckpointMetadata {
+            workspace_id: "wrk_1".into(),
+            created_at: "2026-07-17T00:00:00Z".into(),
+            head: "a".repeat(40),
+            branch: Some("main".into()),
+            status_sha256: "b".repeat(64),
+            state_sha256: "c".repeat(64),
+            bundle_sha256: format!("{:x}", Sha256::digest(bundle)),
+            checkpoint_oid: "d".repeat(40),
+            bundle_ref: "refs/opencode/checkpoints/wrk_1-1".into(),
+            head_ref: "refs/opencode/heads/wrk_1-1".into(),
+            has_changes: true,
+            format_version: 1,
+        }
+    }
+
+    fn fixture_workspace() -> Workspace {
+        Workspace {
+            id: "wrk_1".into(),
+            project_key: "demo".into(),
+            git_ref: "main".into(),
+            owner: "dev".into(),
+            state: WorkspaceState::Running,
+            service_name: "workspace-one".into(),
+            preview_key: "one".into(),
+            password: "p".into(),
+            runtime_token: "t".into(),
+            upstream_environment: "{}".into(),
+            image_ref: "image:dev".into(),
+            image_digest: None,
+            last_activity: String::new(),
+            error: None,
+        }
     }
 }
