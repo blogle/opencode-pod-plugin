@@ -77,12 +77,25 @@ async fn authenticates_restarts_and_terminates_gracefully() {
     let client = reqwest::Client::new();
     let health_url = format!("http://127.0.0.1:{control_port}/healthz");
     let restart_url = format!("http://127.0.0.1:{control_port}/restart");
+    let requested_checkpoint_url = format!("http://127.0.0.1:{control_port}/checkpoint");
 
     let first = wait_ready(&client, &health_url, None).await;
     assert_eq!(first.0, reqwest::StatusCode::UNAUTHORIZED);
     let first = wait_ready(&client, &health_url, Some("test-control-token")).await;
     assert_eq!(first.0, reqwest::StatusCode::OK);
     let first_pid = first.1["childPid"].as_u64().unwrap();
+
+    let response = client.post(&requested_checkpoint_url).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(checkpoint_count.load(Ordering::SeqCst), 0);
+    let response = client
+        .post(&requested_checkpoint_url)
+        .bearer_auth("test-control-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(checkpoint_count.load(Ordering::SeqCst), 1);
 
     let response = client
         .post(&restart_url)
@@ -114,7 +127,7 @@ async fn authenticates_restarts_and_terminates_gracefully() {
     }
     assert_eq!(
         checkpoint_count.load(Ordering::SeqCst),
-        0,
+        1,
         "child restart unexpectedly requested a checkpoint"
     );
 
@@ -132,7 +145,7 @@ async fn authenticates_restarts_and_terminates_gracefully() {
         assert!(Instant::now() < deadline, "supervisor did not terminate");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(checkpoint_count.load(Ordering::SeqCst), 1);
+    assert_eq!(checkpoint_count.load(Ordering::SeqCst), 2);
     checkpoint_server.abort();
 }
 
@@ -191,6 +204,24 @@ async fn failed_final_checkpoint_makes_graceful_exit_nonzero() {
         Some("test-control-token"),
     )
     .await;
+    let response = client
+        .post(format!("http://127.0.0.1:{control_port}/checkpoint"))
+        .bearer_auth("test-control-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        wait_ready(
+            &client,
+            &format!("http://127.0.0.1:{control_port}/healthz"),
+            Some("test-control-token"),
+        )
+        .await
+        .0,
+        reqwest::StatusCode::OK,
+        "failed requested checkpoint stopped the child"
+    );
     kill(
         Pid::from_raw(supervisor.0.id().cast_signed()),
         Signal::SIGTERM,

@@ -75,6 +75,7 @@ struct ControlState {
     token: Arc<String>,
     status: Arc<RwLock<RuntimeStatus>>,
     restart: mpsc::Sender<()>,
+    checkpoint: Arc<SupervisorConfig>,
 }
 
 /// Runs child `OpenCode` and its authenticated lifecycle control endpoint until termination.
@@ -99,6 +100,7 @@ pub async fn run(config: SupervisorConfig) -> Result<()> {
         token: Arc::new(config.control_token.clone()),
         status: Arc::clone(&status),
         restart: restart_tx,
+        checkpoint: Arc::new(config.clone()),
     };
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await
@@ -106,6 +108,7 @@ pub async fn run(config: SupervisorConfig) -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(control_health))
         .route("/restart", post(control_restart))
+        .route("/checkpoint", post(control_checkpoint))
         .with_state(control_state);
     let control_server = tokio::spawn(async move {
         axum::serve(listener, app)
@@ -460,6 +463,19 @@ async fn control_restart(State(state): State<ControlState>, headers: HeaderMap) 
         Ok(()) | Err(mpsc::error::TrySendError::Full(())) => StatusCode::ACCEPTED.into_response(),
         Err(mpsc::error::TrySendError::Closed(())) => {
             StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+}
+
+async fn control_checkpoint(State(state): State<ControlState>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match request_final_checkpoint(&state.checkpoint).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            error!(operation = "requested_checkpoint", %error, "requested checkpoint failed");
+            StatusCode::BAD_GATEWAY.into_response()
         }
     }
 }

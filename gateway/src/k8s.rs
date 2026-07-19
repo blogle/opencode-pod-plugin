@@ -129,6 +129,25 @@ impl Kubernetes {
         Ok(())
     }
 
+    async fn checkpoint_before_delete(&self, workspace: &Workspace, pod: &Pod) -> Result<()> {
+        let ip = pod
+            .status
+            .as_ref()
+            .and_then(|status| status.pod_ip.as_deref())
+            .context("sandbox Pod has no IP for final checkpoint")?;
+        let host = if ip.contains(':') {
+            format!("[{ip}]")
+        } else {
+            ip.to_owned()
+        };
+        request_supervisor_checkpoint(
+            &format!("http://{host}:{SUPERVISOR_PORT}/checkpoint"),
+            &workspace.runtime_token,
+            Duration::from_secs(self.config.lifecycle.ready_timeout_seconds),
+        )
+        .await
+    }
+
     async fn wait_ready(&self, workspace: &Workspace) -> Result<Provisioned> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.config.namespace);
         let deadline = tokio::time::Instant::now()
@@ -166,6 +185,26 @@ impl Kubernetes {
     }
 }
 
+async fn request_supervisor_checkpoint(url: &str, token: &str, timeout: Duration) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .context("build supervisor checkpoint client")?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("request final checkpoint before sandbox deletion")?;
+    if !response.status().is_success() {
+        bail!(
+            "supervisor final checkpoint failed with HTTP {}",
+            response.status()
+        );
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl Orchestrator for Kubernetes {
     async fn provision(
@@ -193,7 +232,8 @@ impl Orchestrator for Kubernetes {
 
     async fn suspend(&self, workspace: &Workspace) -> Result<()> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.config.namespace);
-        if pods.get_opt(&pod_name(workspace)).await?.is_some() {
+        if let Some(pod) = pods.get_opt(&pod_name(workspace)).await? {
+            self.checkpoint_before_delete(workspace, &pod).await?;
             let delete = DeleteParams {
                 grace_period_seconds: Some(
                     self.config.lifecycle.termination_grace_seconds.try_into()?,
@@ -507,6 +547,7 @@ mod tests {
         },
         state::WorkspaceState,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn pod_is_ephemeral_and_hardened() {
@@ -682,5 +723,50 @@ mod tests {
             }]}
         })).unwrap();
         assert_eq!(workspace_exit_code(&pod), Some(1));
+    }
+
+    #[tokio::test]
+    async fn supervisor_checkpoint_request_is_authenticated_and_awaited() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/checkpoint",
+                axum::routing::post(move |headers: axum::http::HeaderMap| {
+                    let observed = Arc::clone(&observed);
+                    async move {
+                        if headers.get(axum::http::header::AUTHORIZATION)
+                            != Some(&axum::http::HeaderValue::from_static(
+                                "Bearer runtime-token",
+                            ))
+                        {
+                            return axum::http::StatusCode::UNAUTHORIZED;
+                        }
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        axum::http::StatusCode::NO_CONTENT
+                    }
+                }),
+            );
+            axum::serve(listener, app).await.unwrap();
+        });
+        request_supervisor_checkpoint(
+            &format!("http://{address}/checkpoint"),
+            "runtime-token",
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let error = request_supervisor_checkpoint(
+            &format!("http://{address}/checkpoint"),
+            "wrong-token",
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("HTTP 401"));
+        server.abort();
     }
 }
