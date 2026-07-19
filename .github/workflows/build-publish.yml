@@ -4,93 +4,83 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
-  pull_request:
-    branches: [master]
-
-env:
-  REGISTRY: ghcr.io
-  ROUTER_IMAGE: ghcr.io/${{ github.repository_owner }}/opencode-k8s-sandbox-router
-  SANDBOX_IMAGE: ghcr.io/${{ github.repository_owner }}/opencode-k8s-sandbox-sandbox
 
 permissions:
   contents: read
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
-  build-router:
-    name: Build Router Image
-    runs-on: ubuntu-latest
+  foundation:
+    name: Build ${{ matrix.name }} image
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: central
+            image: opencode-central
+            dockerfile: runtime/central.Dockerfile
+          - name: gateway
+            image: opencode-gateway
+            dockerfile: gateway/Dockerfile
+          - name: generic-nix
+            image: opencode-generic-nix
+            dockerfile: runtime/generic-nix.Dockerfile
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
+      - uses: docker/metadata-action@v5
         id: meta
-        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ROUTER_IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=${{ github.sha }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
-          context: router
-          push: ${{ github.event_name != 'pull_request' }}
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
-  build-sandbox:
-    name: Build Sandbox Image
-    runs-on: ubuntu-latest
+  runtime:
+    name: Build runtime image
+    needs: foundation
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
+      - uses: docker/metadata-action@v5
         id: meta
-        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.SANDBOX_IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/opencode-runtime
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=${{ github.sha }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
-          context: sandbox-image
-          push: ${{ github.event_name != 'pull_request' }}
+          context: .
+          file: runtime/Dockerfile
+          build-args: |
+            OPENCODE_IMAGE=${{ env.REGISTRY }}/${{ github.repository_owner }}/opencode-central:${{ github.sha }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=runtime
+          cache-to: type=gha,mode=max,scope=runtime

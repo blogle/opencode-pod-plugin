@@ -100,7 +100,7 @@ if [[ "$SKIP_IMAGE_BUILD" == "1" ]]; then
   done
 else
   printf '[e2e] building exact local images\n'
-  docker build --pull=false --tag ocws-e2e-gateway:rev2 --file "$ROOT/tests/fixtures/gateway/Dockerfile" "$ROOT"
+  docker build --pull=false --tag ocws-e2e-gateway:rev2 --file "$ROOT/gateway/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-central:rev2 --file "$ROOT/runtime/central.Dockerfile" "$ROOT"
   docker build --pull=false --build-arg OPENCODE_IMAGE=ocws-e2e-central:rev2 --tag ocws-e2e-runtime:rev2 --file "$ROOT/runtime/Dockerfile" "$ROOT"
   docker build --pull=false --tag ocws-e2e-project:rev2 --file "$ROOT/tests/fixtures/project-dev-image/Dockerfile" "$ROOT"
