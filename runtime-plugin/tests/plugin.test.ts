@@ -123,4 +123,41 @@ describe("runtime plugin", () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it("does not overlap periodic checkpoint callbacks", async () => {
+    let tick: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let checkpoints = 0;
+    const plugin = createRuntimePlugin({
+      env: { ...env, OPENCODE_CHECKPOINT_INTERVAL_SECONDS: "1" },
+      setInterval: ((callback: () => void) => {
+        tick = callback;
+        return { unref() {} } as NodeJS.Timeout;
+      }) as typeof setInterval,
+      fetch: vi.fn<typeof fetch>().mockImplementation(async (url) => {
+        if (String(url).endsWith("/checkpoint")) {
+          checkpoints += 1;
+          await blocked;
+        }
+        return new Response(null, { status: 204 });
+      }),
+      runDirenv: async () => JSON.stringify({}),
+      readFile: async () => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+    });
+    const hooks = await plugin(input());
+    await hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "ses_1", callID: "call_1" },
+      { args: {} },
+    );
+    tick?.();
+    tick?.();
+    await vi.waitFor(() => expect(checkpoints).toBe(1));
+    release?.();
+    await vi.waitFor(() => expect(checkpoints).toBe(1));
+  });
 });

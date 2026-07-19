@@ -14,6 +14,22 @@ describe("runtime configuration", () => {
 
     expect(config.checkpointEndpoint).toBe("http://127.0.0.1:4098");
     expect(config.supervisorEndpoint).toBe("http://127.0.0.1:4097");
+    expect(config.checkpointIntervalSeconds).toBe(120);
+  });
+
+  it("requires a positive periodic checkpoint interval", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...requiredEnv,
+        OPENCODE_CHECKPOINT_INTERVAL_SECONDS: "0",
+      }),
+    ).toThrow("positive integer");
+    expect(
+      loadRuntimeConfig({
+        ...requiredEnv,
+        OPENCODE_CHECKPOINT_INTERVAL_SECONDS: "17",
+      }).checkpointIntervalSeconds,
+    ).toBe(17);
   });
 
   it("accepts configured checkpoint and supervisor endpoints", () => {

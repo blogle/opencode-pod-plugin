@@ -11,6 +11,7 @@ const config: RuntimeConfig = {
   checkpointEndpoint: "http://127.0.0.1:4098",
   supervisorEndpoint: "http://127.0.0.1:4097",
   direnvPath: "/opt/opencode/bin/direnv",
+  checkpointIntervalSeconds: 120,
 };
 const fingerprint: EnvironmentFingerprint = {
   hash: "fingerprint",
@@ -73,6 +74,39 @@ describe("runtime lifecycle", () => {
     });
 
     await expect(lifecycle.activity("tool", "ses_1", "bash")).resolves.toBeUndefined();
+  });
+
+  it("checkpoints periodically only for new dirty generations", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let blockFirst = true;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/checkpoint")) {
+        bodies.push(JSON.parse(String(init?.body)));
+        if (blockFirst) {
+          blockFirst = false;
+          await blocked;
+        }
+      }
+      return new Response(null, { status: 204 });
+    });
+    const lifecycle = new LifecycleCoordinator(new RuntimeClient(config, fetcher), vi.fn());
+
+    await lifecycle.checkpointIfDirty("ses_1", fingerprint);
+    expect(bodies).toHaveLength(0);
+    lifecycle.markDirty();
+    const first = lifecycle.checkpointIfDirty("ses_1", fingerprint);
+    lifecycle.markDirty();
+    release?.();
+    await first;
+    await lifecycle.checkpointIfDirty("ses_1", fingerprint);
+    expect(bodies).toHaveLength(2);
+    expect(bodies.every((body) => body.reason === "periodic-dirty")).toBe(true);
+    await lifecycle.checkpointIfDirty("ses_1", fingerprint);
+    expect(bodies).toHaveLength(2);
   });
 
   it("does not restart or clear dirty state when checkpointing fails", async () => {

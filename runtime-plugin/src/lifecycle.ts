@@ -71,11 +71,12 @@ export class RuntimeClient {
   requestCheckpoint(
     sessionId: string,
     fingerprint: EnvironmentFingerprint,
+    reason = "session.idle",
   ): Promise<void> {
     return this.post(`${this.config.checkpointEndpoint}/checkpoint`, {
       workspaceId: this.config.workspaceId,
       sessionId,
-      reason: "session.idle",
+      reason,
       environmentFingerprint: fingerprint,
     });
   }
@@ -120,6 +121,20 @@ export class LifecycleCoordinator {
       this.idleRequest = undefined;
     });
     return this.idleRequest;
+  }
+
+  async checkpointIfDirty(
+    sessionId: string,
+    fingerprint: EnvironmentFingerprint,
+  ): Promise<void> {
+    if (this.dirtyGeneration === 0) return;
+    const dirtyGeneration = this.dirtyGeneration;
+    try {
+      await this.client.requestCheckpoint(sessionId, fingerprint, "periodic-dirty");
+      if (this.dirtyGeneration === dirtyGeneration) this.dirtyGeneration = 0;
+    } catch (error) {
+      this.logError("periodic-checkpoint", error);
+    }
   }
 
   private async performIdle(

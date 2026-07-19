@@ -18,6 +18,7 @@ export interface RuntimePluginDependencies {
   runDirenv?: DirenvRunner;
   readFile?: FileReader;
   log?: Log;
+  setInterval?: typeof setInterval;
 }
 
 function defaultLog(record: Record<string, unknown>): void {
@@ -38,6 +39,8 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
     const client = new RuntimeClient(config, dependencies.fetch);
     const lifecycle = new LifecycleCoordinator(client, safeLog);
     const environment = new EnvironmentTracker(worktree, dependencies.readFile);
+    let latestSessionId: string | undefined;
+    let periodicRunning = false;
     safeLog({
       level: "info",
       component: "opencode-runtime-plugin",
@@ -58,6 +61,20 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
       }
       return result.fingerprint;
     };
+    const periodicCheckpoint = async () => {
+      if (periodicRunning || !latestSessionId) return;
+      periodicRunning = true;
+      try {
+        await lifecycle.checkpointIfDirty(latestSessionId, await refreshFingerprint());
+      } finally {
+        periodicRunning = false;
+      }
+    };
+    const periodicTimer = (dependencies.setInterval ?? setInterval)(
+      () => void periodicCheckpoint(),
+      config.checkpointIntervalSeconds * 1000,
+    );
+    if (typeof periodicTimer === "object") periodicTimer.unref();
 
     return {
       "shell.env": async ({ cwd }, output) => {
@@ -74,12 +91,14 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
       },
 
       "tool.execute.before": async ({ tool: toolName, sessionID }) => {
+        latestSessionId = sessionID;
         lifecycle.markDirty();
         await lifecycle.activity("tool", sessionID, toolName);
       },
 
       event: async ({ event }) => {
         if (event.type === "message.updated") {
+          latestSessionId = event.properties.info.sessionID;
           await lifecycle.activity("message", event.properties.info.sessionID);
           return;
         }
@@ -88,6 +107,7 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
           return;
         }
         if (event.type === "session.idle") {
+          latestSessionId = event.properties.sessionID;
           const fingerprint = await refreshFingerprint();
           await lifecycle.idle(event.properties.sessionID, fingerprint);
         }

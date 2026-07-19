@@ -6,6 +6,7 @@ export const RUNTIME_ENV = {
   checkpointEndpoint: "OPENCODE_CHECKPOINT_ENDPOINT",
   supervisorEndpoint: "OPENCODE_SUPERVISOR_ENDPOINT",
   direnvPath: "OPENCODE_DIRENV_PATH",
+  checkpointIntervalSeconds: "OPENCODE_CHECKPOINT_INTERVAL_SECONDS",
 } as const;
 
 export interface RuntimeConfig {
@@ -16,6 +17,7 @@ export interface RuntimeConfig {
   checkpointEndpoint: string;
   supervisorEndpoint: string;
   direnvPath: string;
+  checkpointIntervalSeconds: number;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -55,6 +57,12 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(workspaceId)) {
     throw new Error(`${RUNTIME_ENV.workspaceId} contains invalid characters`);
   }
+  const checkpointIntervalSeconds = Number(
+    env[RUNTIME_ENV.checkpointIntervalSeconds]?.trim() || "120",
+  );
+  if (!Number.isSafeInteger(checkpointIntervalSeconds) || checkpointIntervalSeconds <= 0) {
+    throw new Error(`${RUNTIME_ENV.checkpointIntervalSeconds} must be a positive integer`);
+  }
 
   return {
     gatewayUrl: httpUrl(required(env, RUNTIME_ENV.gatewayUrl), RUNTIME_ENV.gatewayUrl),
@@ -70,5 +78,6 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       RUNTIME_ENV.supervisorEndpoint,
     ),
     direnvPath: env[RUNTIME_ENV.direnvPath]?.trim() || "/opt/opencode/bin/direnv",
+    checkpointIntervalSeconds,
   };
 }

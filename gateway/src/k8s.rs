@@ -530,7 +530,7 @@ chmod -R a+rwX /workspace /run/opencode"#
         ],
         "containers":[
           {"name":"workspace","image":image,"imagePullPolicy":"IfNotPresent","command":["/opt/opencode/bin/supervisor"],"workingDir":"/workspace","ports":[{"name":"opencode","containerPort":OPENCODE_PORT}],"env":[
-            {"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"OPENCODE_EXPERIMENTAL_WORKSPACES","value":"true"},{"name":"OPENCODE_CONFIG_DIR","value":"/opt/opencode/config"},{"name":"OPENCODE_SERVER_USERNAME","value":"opencode"},{"name":"OPENCODE_SERVER_PASSWORD","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"password"}}},{"name":"OPENCODE_AUTH_CONTENT","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"opencode-auth-content"}}},{"name":"OPENCODE_EXPECTED_VERSION","value":config.opencode.version},{"name":"OPENCODE_GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"runtime-token"}}},{"name":"OPENCODE_BASE_DOMAIN","value":config.base_domain},{"name":"OPENCODE_SUPERVISOR_ENDPOINT","value":format!("http://127.0.0.1:{SUPERVISOR_PORT}")},{"name":"OPENCODE_CHECKPOINT_ENDPOINT","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}")},{"name":"OPENCODE_DIRENV_PATH","value":"/opt/opencode/bin/direnv"},{"name":"SUPERVISOR_LISTEN","value":format!("127.0.0.1:{SUPERVISOR_PORT}")},{"name":"SUPERVISOR_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"CHECKPOINT_SIDECAR_URL","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}/checkpoint")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"OPENCODE_NIX_FLAKE","value":nix_flake}
+            {"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"OPENCODE_EXPERIMENTAL_WORKSPACES","value":"true"},{"name":"OPENCODE_CONFIG_DIR","value":"/opt/opencode/config"},{"name":"OPENCODE_SERVER_USERNAME","value":"opencode"},{"name":"OPENCODE_SERVER_PASSWORD","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"password"}}},{"name":"OPENCODE_AUTH_CONTENT","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"opencode-auth-content"}}},{"name":"OPENCODE_EXPECTED_VERSION","value":config.opencode.version},{"name":"OPENCODE_GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"runtime-token"}}},{"name":"OPENCODE_BASE_DOMAIN","value":config.base_domain},{"name":"OPENCODE_SUPERVISOR_ENDPOINT","value":format!("http://127.0.0.1:{SUPERVISOR_PORT}")},{"name":"OPENCODE_CHECKPOINT_ENDPOINT","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}")},{"name":"OPENCODE_CHECKPOINT_INTERVAL_SECONDS","value":config.checkpoint.periodic_seconds.to_string()},{"name":"OPENCODE_DIRENV_PATH","value":"/opt/opencode/bin/direnv"},{"name":"SUPERVISOR_LISTEN","value":format!("127.0.0.1:{SUPERVISOR_PORT}")},{"name":"SUPERVISOR_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"CHECKPOINT_SIDECAR_URL","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}/checkpoint")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"OPENCODE_NIX_FLAKE","value":nix_flake}
           ],"volumeMounts":workspace_mounts,"resources":{"requests":{"cpu":project.resources.requests.cpu,"memory":project.resources.requests.memory},"limits":{"cpu":project.resources.limits.cpu,"memory":project.resources.limits.memory}},"readinessProbe":{"tcpSocket":{"port":OPENCODE_PORT},"periodSeconds":2,"failureThreshold":150},"securityContext":security}
         ]
       }
@@ -659,6 +659,7 @@ mod tests {
             "OPENCODE_BASE_DOMAIN",
             "OPENCODE_SUPERVISOR_ENDPOINT",
             "OPENCODE_CHECKPOINT_ENDPOINT",
+            "OPENCODE_CHECKPOINT_INTERVAL_SECONDS",
             "SUPERVISOR_CONTROL_TOKEN_FILE",
             "CHECKPOINT_SIDECAR_URL",
             "CHECKPOINT_CONTROL_TOKEN_FILE",
@@ -667,6 +668,7 @@ mod tests {
         }
         assert!(main.contains("http://127.0.0.1:4097"));
         assert!(main.contains("http://127.0.0.1:4098/checkpoint"));
+        assert!(main.contains("120"));
         assert!(main.contains("opencode-auth-content"));
         assert_eq!(
             containers[0]["readinessProbe"]["tcpSocket"]["port"],
