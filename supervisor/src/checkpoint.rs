@@ -322,8 +322,8 @@ fn snapshot(repo: &Path) -> Result<StateSnapshot> {
         b"worktree-diff",
         &git_stdout(repo, ["diff", "--binary", "--no-ext-diff"])?,
     );
-    let untracked = git_stdout(repo, ["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for path in untracked
+    let paths = git_stdout(repo, ["ls-files", "--others", "--exclude-standard", "-z"])?;
+    for path in paths
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
@@ -335,7 +335,7 @@ fn snapshot(repo: &Path) -> Result<StateSnapshot> {
         append_section(
             &mut bytes,
             b"mode",
-            format!("{:o}", metadata.permissions().mode() & 0o7777).as_bytes(),
+            format!("{:o}", metadata.permissions().mode() & 0o111).as_bytes(),
         );
         let content = if metadata.file_type().is_symlink() {
             fs::read_link(&full_path)

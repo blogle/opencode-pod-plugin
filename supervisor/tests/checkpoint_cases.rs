@@ -136,6 +136,64 @@ fn untracked_file() {
 }
 
 #[test]
+fn untracked_group_write_mode_does_not_break_restore_verification() {
+    let fixture = Fixture::new();
+    let file = fixture.repo.join("group-writable.txt");
+    fs::write(&file, "content\n").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o664)).unwrap();
+    let artifact = capture(&fixture.repo, "wrk_mode", &fixture.artifacts).unwrap();
+    let restored = fixture.root.path().join("mode-restored");
+    git(
+        fixture.root.path(),
+        ["clone", path(&fixture.remote), path(&restored)],
+    );
+    restore(&restored, &artifact.metadata_path, &artifact.bundle_path).unwrap();
+    assert_eq!(
+        fs::read(restored.join("group-writable.txt")).unwrap(),
+        b"content\n"
+    );
+    assert_eq!(
+        fs::metadata(restored.join("group-writable.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111,
+        0
+    );
+}
+
+#[test]
+fn mixed_workspace_state_with_multiple_untracked_files() {
+    let fixture = Fixture::new();
+    for (name, content) in [
+        ("stock-tool.txt", "created-by-stock-bash\n"),
+        ("plugin-observed.txt", "fixture-plugin-loaded\n"),
+        ("runtime-observed.txt", "runtime-injected\n"),
+        ("env-observed.txt", "profile-two\n"),
+        ("untracked.txt", "untracked\n"),
+    ] {
+        fs::write(fixture.repo.join(name), content).unwrap();
+    }
+    fs::write(
+        fixture.repo.join("staged.txt"),
+        "staged base\nstaged-change\n",
+    )
+    .unwrap();
+    git(&fixture.repo, ["add", "staged.txt"]);
+    fs::write(fixture.repo.join("same.txt"), "same base\nindex-change\n").unwrap();
+    git(&fixture.repo, ["add", "same.txt"]);
+    fs::write(
+        fixture.repo.join("same.txt"),
+        "same base\nindex-change\nworktree-change\n",
+    )
+    .unwrap();
+    fs::write(fixture.repo.join("new-staged.txt"), "staged-new\n").unwrap();
+    git(&fixture.repo, ["add", "new-staged.txt"]);
+    git(&fixture.repo, ["rm", "delete-staged.txt"]);
+    fixture.capture_restore();
+}
+
+#[test]
 fn staged_new_file() {
     let fixture = Fixture::new();
     fs::write(fixture.repo.join("new-staged.txt"), "new staged\n").unwrap();
