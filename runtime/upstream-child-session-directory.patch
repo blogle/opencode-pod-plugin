@@ -28,11 +28,12 @@ diff --git a/packages/opencode/src/control-plane/workspace.ts b/packages/opencod
 diff --git a/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts b/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
 --- a/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
 +++ b/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.ts
-@@ -32,12 +32,22 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (hand
+@@ -32,12 +32,24 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (hand
      })
  
      const replay = Effect.fn("SyncHttpApi.replay")(function* (ctx: { payload: typeof ReplayPayload.Type }) {
-+      const directory = ctx.payload.directory
++      const directory = process.cwd()
++      const projectID = (yield* InstanceState.context).project.id
        const payload: EventV2.SerializedEvent[] = ctx.payload.events.map((event) => ({
          id: event.id,
          aggregateID: event.aggregateID,
@@ -46,6 +47,7 @@ diff --git a/packages/opencode/src/server/routes/instance/httpapi/handlers/sync.
 +                info: {
 +                  ...(event.data.info as Record<string, unknown>),
 +                  directory,
++                  projectID,
 +                },
 +              }
 +            : { ...event.data },
