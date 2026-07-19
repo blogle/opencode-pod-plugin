@@ -712,7 +712,7 @@ async fn upload_checkpoint(
         .map_err(ApiError::internal)?
         .filter(|workspace| workspace.state != WorkspaceState::Deleted)
         .ok_or_else(ApiError::not_found)?;
-    authorize(&state, &headers, &workspace, false)?;
+    authorize_runtime(&headers, &workspace)?;
     let encoded = headers
         .get("x-opencode-checkpoint-metadata")
         .and_then(|value| value.to_str().ok())
@@ -919,6 +919,20 @@ fn authorize(
         ));
     }
     Ok(())
+}
+
+fn authorize_runtime(headers: &HeaderMap, workspace: &Workspace) -> Result<(), ApiError> {
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.strip_prefix("Bearer ") == Some(&workspace.runtime_token))
+    {
+        return Ok(());
+    }
+    Err(ApiError(
+        StatusCode::UNAUTHORIZED,
+        "workspace runtime token is required".into(),
+    ))
 }
 
 fn validate_id(id: &str) -> Result<(), ApiError> {
@@ -1169,7 +1183,7 @@ mod tests {
     #[tokio::test]
     async fn raw_checkpoint_api_round_trips_supervisor_metadata() {
         let (state, _dir) = test_state();
-        let app = router(state);
+        let app = router(state.clone());
         let create = r#"{"workspaceId":"wrk_123","projectKey":"demo","gitRef":"main","owner":"dev@example.test","upstreamEnvironment":{"OPENCODE_AUTH_CONTENT":"{}"}}"#;
         let response = app
             .clone()
@@ -1182,6 +1196,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
+        let runtime_token = state
+            .store
+            .workspace("wrk_123")
+            .unwrap()
+            .unwrap()
+            .runtime_token;
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/v1/workspaces/wrk_123/checkpoints")
+                    .body(Body::from("bad"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
         let bundle = b"supervisor git bundle";
         let metadata = CheckpointMetadata {
@@ -1203,6 +1234,7 @@ mod tests {
             .oneshot(
                 Request::post("/v1/workspaces/wrk_123/checkpoints")
                     .header("content-type", "application/octet-stream")
+                    .header("authorization", format!("Bearer {runtime_token}"))
                     .header(
                         "x-opencode-checkpoint-metadata",
                         serde_json::to_string(&metadata).unwrap(),
