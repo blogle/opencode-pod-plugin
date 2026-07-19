@@ -397,8 +397,8 @@ fn validate_config(config: &SupervisorConfig) -> Result<()> {
         "expected version must equal crate pin {PINNED_OPENCODE_VERSION}"
     );
     ensure!(
-        config.listen.starts_with("127.0.0.1:"),
-        "control API must bind to IPv4 loopback"
+        control_listen_allowed(&config.listen),
+        "control API must bind to IPv4 loopback or the Pod network interface"
     );
     ensure!(
         config.checkpoint_url.is_some() == config.checkpoint_token.is_some(),
@@ -415,6 +415,15 @@ fn validate_config(config: &SupervisorConfig) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn control_listen_allowed(listen: &str) -> bool {
+    listen
+        .parse::<std::net::SocketAddr>()
+        .is_ok_and(|address| match address.ip() {
+            std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_unspecified(),
+            std::net::IpAddr::V6(_) => false,
+        })
 }
 
 fn ensure_executable(path: &Path, name: &str) -> Result<()> {
@@ -518,12 +527,21 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_version;
+    use super::{control_listen_allowed, parse_version};
 
     #[test]
     fn parses_supported_version_outputs() {
         assert_eq!(parse_version("1.18.3\n").as_deref(), Some("1.18.3"));
         assert_eq!(parse_version("opencode v1.18.3").as_deref(), Some("1.18.3"));
         assert_eq!(parse_version("development").as_deref(), None);
+    }
+
+    #[test]
+    fn restricts_control_listener_to_loopback_or_pod_interfaces() {
+        assert!(control_listen_allowed("127.0.0.1:4097"));
+        assert!(control_listen_allowed("0.0.0.0:4097"));
+        assert!(!control_listen_allowed("10.0.0.8:4097"));
+        assert!(!control_listen_allowed("[::]:4097"));
+        assert!(!control_listen_allowed("invalid"));
     }
 }
