@@ -486,10 +486,15 @@ pub fn pod_manifest(
     let security = json!({"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}});
     checkout_mounts.push(json!({"name":"runtime","mountPath":"/opt/opencode"}));
     checkout_mounts.push(json!({"name":"runtime-state","mountPath":"/run/opencode"}));
-    let profile_script = if has_profile {
-        "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\nln -s /run/opencode-env/profile.envrc /workspace/.envrc"
-    } else {
-        ":"
+    let nix_flake = match &project.environment {
+        ProjectEnvironment::Nix { flake } => Some(flake.as_str()),
+        _ => None,
+    };
+    let profile_script = match (has_profile, nix_flake.is_some()) {
+        (true, true) => "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\ncat /run/opencode-env/profile.envrc > /run/opencode/managed.envrc\nprintf '\\nuse flake %s\\n' \"$OPENCODE_NIX_FLAKE\" >> /run/opencode/managed.envrc\nln -s /run/opencode/managed.envrc /workspace/.envrc",
+        (true, false) => "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\nln -s /run/opencode-env/profile.envrc /workspace/.envrc",
+        (false, true) => "if ! git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then printf 'use flake %s\\n' \"$OPENCODE_NIX_FLAKE\" > /run/opencode/managed.envrc; ln -s /run/opencode/managed.envrc /workspace/.envrc; fi",
+        (false, false) => ":",
     };
     let checkout_script = format!(
         r#"set -eu
@@ -513,10 +518,15 @@ esac
 {profile_script}
 chmod -R a+rwX /workspace /run/opencode"#
     );
-    let nix_flake = match &project.environment {
-        ProjectEnvironment::Nix { flake } => Some(flake.as_str()),
-        _ => None,
-    };
+    let mut checkout_env = vec![
+        json!({"name":"REPOSITORY","value":project.repository}),
+        json!({"name":"GIT_REF","value":workspace.git_ref}),
+        json!({"name":"GATEWAY_URL","value":config.runtime.gateway_url}),
+        json!({"name":"OPENCODE_WORKSPACE_ID","value":workspace.id}),
+    ];
+    if let Some(flake) = nix_flake {
+        checkout_env.push(json!({"name":"OPENCODE_NIX_FLAKE","value":flake}));
+    }
     let checkpoint_sidecar = json!({"name":"checkpoint","image":config.runtime.image,"restartPolicy":"Always","command":["/opt/opencode/bin/supervisor","sidecar"],"env":[{"name":"WORKSPACE_PATH","value":"/workspace"},{"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"CHECKPOINT_OUTPUT_DIR","value":"/run/opencode/checkpoints"},{"name":"CHECKPOINT_LISTEN","value":format!("127.0.0.1:{CHECKPOINT_PORT}")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"GATEWAY_URL","value":config.runtime.gateway_url},{"name":"WORKSPACE_RUNTIME_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"}],"ports":[{"name":"checkpoint","containerPort":CHECKPOINT_PORT}],"volumeMounts":[{"name":"workspace","mountPath":"/workspace"},{"name":"runtime","mountPath":"/opt/opencode"},{"name":"runtime-state","mountPath":"/run/opencode"},{"name":"runtime-auth","mountPath":"/run/opencode-auth","readOnly":true}],"resources":{"requests":{"cpu":"10m","memory":"32Mi"},"limits":{"cpu":"500m","memory":"256Mi"}},"securityContext":security});
     Ok(json!({
       "apiVersion":"v1", "kind":"Pod", "metadata":{"name":pod_name(workspace),"namespace":config.namespace,"labels":labels(workspace)},
@@ -525,7 +535,7 @@ chmod -R a+rwX /workspace /run/opencode"#
         "volumes":volumes,
         "initContainers":[
           {"name":"runtime-inject","image":config.runtime.image,"command":["/bin/sh","-ec","umask 0002; cp -a /opt/opencode/. /runtime/; chmod -R a+rX,g+w /runtime"],"volumeMounts":[{"name":"runtime","mountPath":"/runtime"}],"securityContext":security},
-          {"name":"checkout","image":config.runtime.image,"command":["/bin/sh","-ec",checkout_script],"env":[{"name":"REPOSITORY","value":project.repository},{"name":"GIT_REF","value":workspace.git_ref},{"name":"GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_WORKSPACE_ID","value":workspace.id}],"volumeMounts":checkout_mounts,"securityContext":security},
+          {"name":"checkout","image":config.runtime.image,"command":["/bin/sh","-ec",checkout_script],"env":checkout_env,"volumeMounts":checkout_mounts,"securityContext":security},
           checkpoint_sidecar
         ],
         "containers":[
@@ -598,7 +608,7 @@ mod tests {
             last_activity: String::new(),
             error: None,
         };
-        let project = Project {
+        let mut project = Project {
             key: "demo".into(),
             name: "Demo".into(),
             repository: "https://git/demo".into(),
@@ -697,6 +707,20 @@ mod tests {
         let secret = runtime_secret_manifest("sandboxes", &workspace).unwrap();
         assert_eq!(secret["stringData"]["opencode-auth-content"], "auth-json");
         assert!(secret.to_string().contains("runtime-token"));
+
+        project.environment = ProjectEnvironment::Nix {
+            flake: ".#devShell".into(),
+        };
+        let nix_pod = pod_manifest(&config, &workspace, &project, false).unwrap();
+        let nix_checkout = nix_pod["spec"]["initContainers"][1].to_string();
+        assert!(nix_checkout.contains("OPENCODE_NIX_FLAKE"));
+        assert!(nix_checkout.contains(".#devShell"));
+        assert!(nix_checkout.contains("use flake %s"));
+        assert!(nix_checkout.contains("managed.envrc"));
+        let private_nix_pod = pod_manifest(&config, &workspace, &project, true).unwrap();
+        let private_nix_checkout = private_nix_pod["spec"]["initContainers"][1].to_string();
+        assert!(private_nix_checkout.contains("cat /run/opencode-env/profile.envrc"));
+        assert!(private_nix_checkout.contains("use flake %s"));
     }
 
     #[test]
