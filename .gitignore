@@ -10,6 +10,7 @@ __pycache__/
 *.lock
 !package-lock.json
 !Cargo.lock
+!flake.lock
 
 # Test files
 _test_*.ts

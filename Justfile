@@ -9,6 +9,8 @@ test:
     npm --prefix runtime-plugin test
     cargo test --manifest-path gateway/Cargo.toml
     cargo test --manifest-path supervisor/Cargo.toml
+    ./tests/compat/test-ocws.sh
+    ./tests/compat/run.sh
 
 check:
     npm --prefix plugin run typecheck

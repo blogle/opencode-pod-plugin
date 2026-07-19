@@ -25,7 +25,13 @@
             pkgs.nodejs
             pkgs.kind
             pkgs.kubectl
+            pkgs.kustomize
             pkgs.websocat
+            pkgs.just
+            pkgs.jq
+            pkgs.git
+            pkgs.python3
+            pkgs.docker-client
             pkgs.pkg-config
             pkgs.openssl
           ];
