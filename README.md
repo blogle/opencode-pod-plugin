@@ -70,5 +70,6 @@ operator explicitly sets `trustTrackedEnvrc: true` for that project.
 Start with `deploy/base` and provide exact image references, project
 registration, trusted identity-proxy settings, wildcard DNS/TLS, and a
 Kubernetes NetworkPolicy-capable CNI. See `deploy/examples` for integration
-examples, `deploy/nandstorm` for the concrete PoC overlay, and `SPEC_REV_2.md`
-for the complete product and security contract.
+examples and `SPEC_REV_2.md` for the complete product and security contract.
+Cluster-specific overlays belong with the target cluster's infrastructure
+configuration rather than in this repository.

@@ -51,5 +51,3 @@ jobs:
         run: kustomize build deploy/kind >/dev/null
       - name: Render shared-base E2E overlay
         run: kustomize build tests/e2e >/dev/null
-      - name: Render nandstorm PoC overlay
-        run: kustomize build deploy/nandstorm >/dev/null
