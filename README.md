@@ -50,20 +50,25 @@ external image registry.
 
 ## Environment profiles
 
-The `ocws` helper manages private project `.envrc` profiles:
+The `ocws` helper manages private, owner/project-scoped environment files:
 
 ```bash
-ocws env push --project my-project --file .envrc
+ocws env push --project my-project --file .env
 ocws env status --project my-project
 ocws env delete --project my-project
 ```
 
 `ocws env push` can infer a registered project from the current Git remote.
-Profile content is stored outside Git and is never returned by the metadata API.
+Profile content is stored in a Kubernetes Secret outside Git and is never
+returned by the metadata API. Projects default to a managed `.envrc`, but may
+set `profileTarget: .env` when a trusted tracked `.envrc` loads a gitignored
+dotenv file. Regular tracked `.envrc` files are authorized only when the
+operator explicitly sets `trustTrackedEnvrc: true` for that project.
 
 ## Deployment
 
 Start with `deploy/base` and provide exact image references, project
 registration, trusted identity-proxy settings, wildcard DNS/TLS, and a
 Kubernetes NetworkPolicy-capable CNI. See `deploy/examples` for integration
-examples and `SPEC_REV_2.md` for the complete product and security contract.
+examples, `deploy/nandstorm` for the concrete PoC overlay, and `SPEC_REV_2.md`
+for the complete product and security contract.

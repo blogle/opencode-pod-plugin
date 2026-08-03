@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const FINGERPRINT_FILES = [".envrc", "flake.nix", "flake.lock"] as const;
+const FINGERPRINT_FILES = [".envrc", ".env", "flake.nix", "flake.lock"] as const;
 
 async function governingEnvrcIsSymlink(cwd: string): Promise<boolean> {
   let directory = resolve(cwd);

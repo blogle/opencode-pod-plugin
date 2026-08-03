@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: central
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: auth-sso-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [opencode.thejeffer.net]
+      secretName: opencode-tls
+  rules:
+    - host: opencode.thejeffer.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: central
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-api
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: auth-sso-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [workspaces.opencode.thejeffer.net]
+      secretName: opencode-tls
+  rules:
+    - host: workspaces.opencode.thejeffer.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: api
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-previews
+  namespace: opencode-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: auth-sso-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["*.opencode.thejeffer.net"]
+      secretName: opencode-tls
+  rules:
+    - host: "*.opencode.thejeffer.net"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: preview

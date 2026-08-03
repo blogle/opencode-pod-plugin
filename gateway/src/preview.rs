@@ -24,16 +24,16 @@ pub struct PreviewTarget {
 }
 
 pub fn parse_host(host: &str, base_domain: &str) -> Option<PreviewTarget> {
-    let host = host.trim().trim_end_matches('.');
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     let host = if host.starts_with('[') {
         return None;
     } else {
         host.rsplit_once(':')
             .filter(|(_, suffix)| suffix.parse::<u16>().is_ok())
             .map(|(name, _)| name)
-            .unwrap_or(host)
+            .unwrap_or(&host)
     };
-    let suffix = format!(".{base_domain}");
+    let suffix = format!(".{}", base_domain.to_ascii_lowercase());
     let label = host.strip_suffix(&suffix)?;
     if label.contains('.') {
         return None;

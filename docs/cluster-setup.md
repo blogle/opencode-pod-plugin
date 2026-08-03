@@ -77,3 +77,8 @@ nix develop --command just check
 nix develop --command just build
 nix develop --command just e2e
 ```
+
+The kind acceptance overlay consumes `deploy/base` directly and uses
+port-forwards, a fake LLM, local fixture images, and development identity. It
+does not require ingress, DNS, TLS, or an authentication proxy. Cluster-specific
+SSO and wildcard routing remain target-cluster smoke tests.

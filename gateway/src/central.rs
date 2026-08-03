@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct CentralClient {
     client: Client,
     base_url: Url,
+    public_url: Url,
 }
 
 #[derive(Clone, Debug)]
@@ -60,22 +61,18 @@ struct WorkspaceWarp<'a> {
 }
 
 impl CentralClient {
-    pub fn new(base_url: &str) -> Result<Self> {
-        let base_url = Url::parse(base_url).context("opencode.centralUrl is invalid")?;
-        if !matches!(base_url.scheme(), "http" | "https")
-            || base_url.host_str().is_none()
-            || !base_url.username().is_empty()
-            || base_url.password().is_some()
-            || base_url.query().is_some()
-            || base_url.fragment().is_some()
-        {
-            bail!("opencode.centralUrl must be an HTTP URL without credentials or query data");
-        }
+    pub fn new(base_url: &str, public_url: &str) -> Result<Self> {
+        let base_url = validated_url(base_url, "opencode.centralUrl")?;
+        let public_url = validated_url(public_url, "opencode.publicUrl")?;
         let client = Client::builder()
             .timeout(Duration::from_secs(600))
             .build()
             .context("build central OpenCode client")?;
-        Ok(Self { client, base_url })
+        Ok(Self {
+            client,
+            base_url,
+            public_url,
+        })
     }
 
     pub async fn launch(&self, spec: LaunchSpec<'_>) -> Result<LaunchResult> {
@@ -118,7 +115,7 @@ impl CentralClient {
         .await?;
         Ok(LaunchResult {
             session_url: self
-                .base_url
+                .public_url
                 .join(&format!("session/{}", session.id))?
                 .to_string(),
             session_id: session.id,
@@ -128,7 +125,7 @@ impl CentralClient {
 
     pub fn session_url(&self, session_id: &str) -> Result<String> {
         Ok(self
-            .base_url
+            .public_url
             .join(&format!("session/{session_id}"))?
             .to_string())
     }
@@ -185,6 +182,21 @@ impl CentralClient {
     }
 }
 
+fn validated_url(value: &str, name: &str) -> Result<Url> {
+    let url = Url::parse(value).with_context(|| format!("{name} is invalid"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("{name} must be a root HTTP URL without credentials or query data");
+    }
+    Ok(url)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -231,7 +243,11 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = CentralClient::new(&format!("http://{address}/")).unwrap();
+        let client = CentralClient::new(
+            &format!("http://{address}/"),
+            "https://opencode.example.test/",
+        )
+        .unwrap();
         let result = client
             .launch(LaunchSpec {
                 project_key: "demo",
@@ -245,6 +261,10 @@ mod tests {
 
         assert_eq!(result.session_id, "ses_1");
         assert_eq!(result.workspace_id, "wrk_1");
+        assert_eq!(
+            result.session_url,
+            "https://opencode.example.test/session/ses_1"
+        );
         assert_eq!(calls.lock().unwrap().len(), 3);
         let calls = calls.lock().unwrap();
         assert!(calls[0].0.contains("directory=%2Fcatalog%2Fdemo"));

@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     config.projects().context("validate project registry")?;
     let store = Store::open(&config.state_path)?;
     let checkpoints = CheckpointStorage::new(&config.checkpoint.path, store.clone())?;
-    let central = CentralClient::new(&config.opencode.central_url)?;
+    let central = CentralClient::new(&config.opencode.central_url, &config.opencode.public_url)?;
     let auth = Authenticator::new(&config.auth)?;
     let client = kube::Client::try_default()
         .await

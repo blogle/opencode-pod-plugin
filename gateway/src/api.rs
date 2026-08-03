@@ -980,6 +980,7 @@ mod tests {
             opencode: OpenCodeConfig {
                 version: "1.18.3".into(),
                 central_url: "x".into(),
+                public_url: "https://opencode.test".into(),
             },
             runtime: RuntimeConfig {
                 image: "runtime:v1".into(),
@@ -1009,7 +1010,11 @@ mod tests {
                 k8s: Arc::new(FakeK8s),
                 operations: Arc::new(tokio::sync::Mutex::new(())),
                 checkpoints,
-                central: crate::central::CentralClient::new("http://central.test:4096").unwrap(),
+                central: crate::central::CentralClient::new(
+                    "http://central.test:4096",
+                    "https://opencode.test",
+                )
+                .unwrap(),
                 auth,
             },
             dir,

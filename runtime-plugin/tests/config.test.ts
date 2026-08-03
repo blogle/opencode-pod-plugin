@@ -5,6 +5,7 @@ const requiredEnv = {
   OPENCODE_GATEWAY_URL: "http://gateway.internal",
   OPENCODE_GATEWAY_TOKEN: "runtime-token",
   OPENCODE_WORKSPACE_ID: "wrk_test",
+  OPENCODE_PREVIEW_KEY: "wrk-test-a1b2c3",
   OPENCODE_BASE_DOMAIN: "preview.test",
 };
 
@@ -15,6 +16,7 @@ describe("runtime configuration", () => {
     expect(config.checkpointEndpoint).toBe("http://127.0.0.1:4098");
     expect(config.supervisorEndpoint).toBe("http://127.0.0.1:4097");
     expect(config.checkpointIntervalSeconds).toBe(120);
+    expect(config.previewKey).toBe("wrk-test-a1b2c3");
   });
 
   it("requires a positive periodic checkpoint interval", () => {

@@ -36,6 +36,7 @@ pub struct SupervisorConfig {
     pub checkpoint_url: Option<String>,
     pub checkpoint_token: Option<String>,
     pub checkpoint_timeout: Duration,
+    pub trust_tracked_envrc: bool,
 }
 
 impl Default for SupervisorConfig {
@@ -55,6 +56,7 @@ impl Default for SupervisorConfig {
             checkpoint_url: None,
             checkpoint_token: None,
             checkpoint_timeout: Duration::new(120, 0),
+            trust_tracked_envrc: false,
         }
     }
 }
@@ -368,7 +370,12 @@ async fn request_final_checkpoint(config: &SupervisorConfig) -> Result<()> {
 
 async fn authorize_managed_envrc(config: &SupervisorConfig) -> Result<()> {
     let envrc = config.workspace.join(".envrc");
-    if !envrc.is_symlink() {
+    let managed_symlink = envrc.is_symlink()
+        && std::fs::read_link(&envrc).is_ok_and(|target| {
+            target == Path::new("/run/opencode/managed.envrc")
+                || target == Path::new("/run/opencode-env/profile.envrc")
+        });
+    if !(managed_symlink || config.trust_tracked_envrc && (envrc.is_file() || envrc.is_symlink())) {
         return Ok(());
     }
     let status = Command::new(&config.direnv)
@@ -549,7 +556,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_project_environment, control_listen_allowed, parse_version, SupervisorConfig,
+        authorize_managed_envrc, check_project_environment, control_listen_allowed, parse_version,
+        SupervisorConfig,
     };
     use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
@@ -576,6 +584,54 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("project environment evaluation failed"));
         assert!(!message.contains("private-profile-value"));
+    }
+
+    #[tokio::test]
+    async fn authorizes_regular_envrc_only_with_explicit_trust() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(".envrc"), "export SAFE=1\n").unwrap();
+        let marker = directory.path().join("allowed");
+        let direnv = directory.path().join("direnv");
+        std::fs::write(&direnv, "#!/bin/sh\ntouch allowed\n").unwrap();
+        let mut permissions = std::fs::metadata(&direnv).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&direnv, permissions).unwrap();
+        let mut config = SupervisorConfig {
+            workspace: directory.path().to_owned(),
+            direnv,
+            ..SupervisorConfig::default()
+        };
+
+        authorize_managed_envrc(&config).await.unwrap();
+        assert!(!marker.exists());
+        config.trust_tracked_envrc = true;
+        authorize_managed_envrc(&config).await.unwrap();
+        assert!(marker.exists());
+    }
+
+    #[tokio::test]
+    async fn does_not_authorize_untrusted_repository_symlink() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("repository-envrc"),
+            "export UNSAFE=1\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("repository-envrc", directory.path().join(".envrc")).unwrap();
+        let marker = directory.path().join("allowed");
+        let direnv = directory.path().join("direnv");
+        std::fs::write(&direnv, "#!/bin/sh\ntouch allowed\n").unwrap();
+        let mut permissions = std::fs::metadata(&direnv).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&direnv, permissions).unwrap();
+        let config = SupervisorConfig {
+            workspace: directory.path().to_owned(),
+            direnv,
+            ..SupervisorConfig::default()
+        };
+
+        authorize_managed_envrc(&config).await.unwrap();
+        assert!(!marker.exists());
     }
 
     #[test]

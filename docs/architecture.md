@@ -31,6 +31,9 @@ Preview HTTP/WebSocket traffic enters gateway on the wildcard hostname
 `<preview-key>-<port>.<base-domain>` and is sent directly to the current ready
 Pod IP. OpenCode, supervisor, and checkpoint control ports are reserved.
 
+Gateway supplies the canonical DNS-safe preview key to the child runtime; the
+runtime never constructs preview hosts from the raw OpenCode workspace ID.
+
 OpenCode is pinned to version `1.18.3`, upstream commit
 `127bdb30784d508cc556c71a0f32b508a3061517`. Central and child use the same
 narrowly patched binary. `tests/compat/run.sh` fails if the pinned upstream

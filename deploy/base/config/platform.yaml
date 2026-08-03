@@ -6,6 +6,7 @@ statePath: /var/lib/opencode-sandbox/gateway.sqlite3
 opencode:
   version: 1.18.3
   centralUrl: http://central.opencode-system.svc.cluster.local:4096
+  publicUrl: https://app.opencode.example.com
 runtime:
   image: ghcr.io/blogle/opencode-sandbox-runtime:1.18.3
   genericNixImage: ghcr.io/blogle/opencode-sandbox-nix:1.18.3

@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central
+  namespace: opencode-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: opencode
+          env:
+            - name: OPENCODE_AUTH_CONTENT
+              value: '{"fixture":{"type":"api","key":"fixture-key"}}'
+            - name: OPENCODE_PRINT_LOGS
+              value: "1"

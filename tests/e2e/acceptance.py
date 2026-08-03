@@ -307,7 +307,7 @@ def main():
             [project["key"] for project in projects] == ["fixture", "fixture-nix"],
             "fixture projects are not registered",
         )
-        profile_one = b"export FIXTURE_PRIVATE=profile-one\n"
+        profile_one = b"FIXTURE_PRIVATE=profile-one\n"
         profile_meta = request(
             gateway, "/v1/projects/fixture/env-profile", method="PUT", data=profile_one
         )[2]
@@ -400,7 +400,9 @@ def main():
             == "profile-one",
             timeout=30,
         )
-        check(".envrc" not in json.dumps(request(central, routed_path("/vcs/status", workspace))[2]), "managed .envrc appeared in Git status")
+        status_json = json.dumps(request(central, routed_path("/vcs/status", workspace))[2])
+        check(".env" not in status_json, "private .env appeared in Git status")
+        check(".envrc" not in status_json, "tracked .envrc appeared as modified")
         secret_name = next(
             volume["secret"]["secretName"]
             for volume in pod["spec"]["volumes"]
@@ -412,7 +414,7 @@ def main():
         runtime_token = base64.b64decode(secret["data"]["runtime-token"]).decode()
         initial_supervisor = supervisor_status(pod_name, runtime_token)
         initial_pid = initial_supervisor["childPid"]
-        profile_two = b"export FIXTURE_PRIVATE=profile-two\n"
+        profile_two = b"FIXTURE_PRIVATE=profile-two\n"
         request(gateway, "/v1/projects/fixture/env-profile", method="PUT", data=profile_two)
 
         def updated_profile_visible():
@@ -422,7 +424,7 @@ def main():
                 session,
                 "cat /run/opencode-env/profile.envrc; printf 'VALUE=%s\\n' \"$FIXTURE_PRIVATE\"",
             )
-            if "export FIXTURE_PRIVATE=profile-two" in value and "VALUE=profile-two" in value:
+            if "FIXTURE_PRIVATE=profile-two" in value and "VALUE=profile-two" in value:
                 return value
             return None
 
@@ -519,7 +521,18 @@ def main():
 
         log("preview routing and reserved port rejection")
         prompt(central, workspace, session, "E2E_PREVIEW")
-        preview_host = f"{record['target']['url'].split('//', 1)[1].split('.', 1)[0].removeprefix('workspace-')}-18080.test.invalid"
+        preview_key = service_name.removeprefix("workspace-")
+        preview_environment = shell(
+            central,
+            workspace,
+            session,
+            "printf 'PREVIEW_KEY=%s\\n' \"$OPENCODE_PREVIEW_KEY\"",
+        )
+        check(
+            f"PREVIEW_KEY={preview_key}" in preview_environment,
+            "runtime did not receive the canonical preview key",
+        )
+        preview_host = f"{preview_key}-18080.test.invalid"
         preview_body = wait_until(
             "preview server",
             lambda: request(
@@ -573,7 +586,7 @@ def main():
 
         log("gateway restart recovery and child crash recovery")
         gateway_forward.close()
-        kubectl("-n", "opencode-system", "delete", "pod", "-l", "app=gateway", "--wait=true")
+        kubectl("-n", "opencode-system", "delete", "pod", "-l", "app.kubernetes.io/name=gateway", "--wait=true")
         kubectl("-n", "opencode-system", "rollout", "status", "deployment/gateway", "--timeout=180s")
         gateway_forward = PortForward("opencode-system", "service/gateway", 8080)
         forwards[0] = gateway_forward
@@ -734,36 +747,34 @@ def main():
         request(gateway, f"/v1/workspaces/{workspace_b}", method="DELETE", expected=(204,))
         request(gateway, f"/v1/workspaces/{nix_workspace}", method="DELETE", expected=(204,))
 
-        log("invalid environment profile fails closed")
-        invalid_profile = b"export SHOULD_NOT_EXIST=private-profile-value\nexit 42\n"
-        invalid_meta = request(
+        log("dotenv profile remains non-executable data")
+        data_profile = b"FIXTURE_PRIVATE=private-profile-value\nexit 42\n"
+        data_meta = request(
             gateway,
             "/v1/projects/fixture/env-profile",
             method="PUT",
-            data=invalid_profile,
+            data=data_profile,
         )[2]
-        check("private-profile-value" not in json.dumps(invalid_meta), "invalid profile API leaked secret content")
-        invalid_workspace = "wrk_invalid_environment"
+        check("private-profile-value" not in json.dumps(data_meta), "dotenv profile API leaked secret content")
+        data_workspace = "wrk_dotenv_profile"
         request(
             gateway,
             "/v1/workspaces",
             method="POST",
             payload={
-                "workspaceId": invalid_workspace,
+                "workspaceId": data_workspace,
                 "projectKey": "fixture",
                 "gitRef": "main",
                 "owner": "e2e@example.test",
                 "upstreamEnvironment": {"OPENCODE_AUTH_CONTENT": "{}"},
             },
-            expected=(503,),
+            expected=(201,),
             timeout=60,
         )
-        invalid_record = workspace_record(gateway, invalid_workspace)
-        check(invalid_record["state"] == "error", f"invalid environment did not enter error: {invalid_record}")
-        error_text = invalid_record.get("error") or ""
-        check("environment evaluation failed" in error_text, f"invalid environment error is not actionable: {error_text}")
-        check("private-profile-value" not in error_text, "invalid environment error leaked profile content")
-        request(gateway, f"/v1/workspaces/{invalid_workspace}", method="DELETE", expected=(204,))
+        data_record = workspace_record(gateway, data_workspace)
+        check(data_record["state"] == "running", f"dotenv content executed as shell code: {data_record}")
+        check("private-profile-value" not in json.dumps(data_record), "workspace API leaked dotenv content")
+        request(gateway, f"/v1/workspaces/{data_workspace}", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile", method="DELETE", expected=(204,))
         request(gateway, "/v1/projects/fixture/env-profile/meta", expected=(404,))
 
@@ -781,8 +792,8 @@ def main():
         checkpoint_meta = request(gateway, f"/v1/workspaces/{corrupt_workspace}/checkpoints/latest")[2]
         bundle_sha = checkpoint_meta["bundleSha256"]
         workspace_hash = hashlib.sha256(corrupt_workspace.encode()).hexdigest()
-        blob_path = f"/data/checkpoints/{workspace_hash}/{bundle_sha}.bundle"
-        gateway_pod = kubectl("-n", "opencode-system", "get", "pod", "-l", "app=gateway", "-o", "jsonpath={.items[0].metadata.name}")
+        blob_path = f"/var/lib/opencode-sandbox/checkpoints/{workspace_hash}/{bundle_sha}.bundle"
+        gateway_pod = kubectl("-n", "opencode-system", "get", "pod", "-l", "app.kubernetes.io/name=gateway", "-o", "jsonpath={.items[0].metadata.name}")
         kubectl(
             "-n", "opencode-system", "exec", gateway_pod, "--",
             "sh", "-c",
@@ -791,7 +802,23 @@ def main():
         request(gateway, f"/v1/workspaces/{corrupt_workspace}/ensure", method="POST", expected=(503,), timeout=60)
         corrupt_record = workspace_record(gateway, corrupt_workspace)
         check(corrupt_record["state"] == "error", f"corrupted checkpoint did not enter error: {corrupt_record}")
-        check(resource_absent("opencode-sandboxes", "pod", corrupt_pod_name), "corrupt checkpoint workspace has a running Pod")
+        failed_pod = pod_for(corrupt_workspace)
+        workspace_status = next(
+            (
+                status
+                for status in failed_pod.get("status", {}).get("containerStatuses", [])
+                if status["name"] == "workspace"
+            ),
+            None,
+        )
+        check(
+            workspace_status is None
+            or (
+                not workspace_status.get("ready", False)
+                and "running" not in workspace_status.get("state", {})
+            ),
+            "corrupt checkpoint started child OpenCode",
+        )
         request(gateway, f"/v1/workspaces/{corrupt_workspace}", method="DELETE", expected=(204,))
 
         check(session_b != session, "concurrent sessions unexpectedly share identity")

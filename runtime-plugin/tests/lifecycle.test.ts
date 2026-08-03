@@ -7,6 +7,7 @@ const config: RuntimeConfig = {
   gatewayUrl: "http://gateway.internal",
   gatewayToken: "very-secret-token",
   workspaceId: "wrk_test",
+  previewKey: "wrk-test-a1b2c3",
   baseDomain: "preview.test",
   checkpointEndpoint: "http://127.0.0.1:4098",
   supervisorEndpoint: "http://127.0.0.1:4097",
@@ -15,7 +16,7 @@ const config: RuntimeConfig = {
 };
 const fingerprint: EnvironmentFingerprint = {
   hash: "fingerprint",
-  files: { ".envrc": "env", "flake.nix": null, "flake.lock": null },
+  files: { ".envrc": "env", ".env": null, "flake.nix": null, "flake.lock": null },
 };
 
 describe("runtime lifecycle", () => {

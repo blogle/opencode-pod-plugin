@@ -79,9 +79,10 @@ describe("dynamic environment", () => {
     expect(() => parseDirenvJson('{"SECRET":12}')).toThrow("non-string");
   });
 
-  it("hashes .envrc and both flake files without retaining contents", async () => {
+  it("hashes environment and flake files without retaining contents", async () => {
     const files = new Map([
       ["/workspace/.envrc", Buffer.from("export SECRET=private")],
+      ["/workspace/.env", Buffer.from("PRIVATE_VALUE=dotenv-secret")],
       ["/workspace/flake.nix", Buffer.from("flake")],
     ]);
     const fingerprint = await calculateEnvironmentFingerprint("/workspace", async (path) => {
@@ -93,9 +94,11 @@ describe("dynamic environment", () => {
     expect(fingerprint.files[".envrc"]).toBe(
       createHash("sha256").update("export SECRET=private").digest("hex"),
     );
+    expect(fingerprint.files[".env"]).toHaveLength(64);
     expect(fingerprint.files["flake.nix"]).toHaveLength(64);
     expect(fingerprint.files["flake.lock"]).toBeNull();
     expect(JSON.stringify(fingerprint)).not.toContain("private");
+    expect(JSON.stringify(fingerprint)).not.toContain("dotenv-secret");
   });
 
   it("detects changes after establishing a baseline", async () => {

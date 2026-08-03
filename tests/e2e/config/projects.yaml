@@ -1,0 +1,25 @@
+projects:
+  fixture:
+    name: Kind Fixture
+    repository: http://git-server.opencode-system.svc.cluster.local:8000/fixture.git
+    defaultRef: main
+    profileTarget: .env
+    trustTrackedEnvrc: true
+    environment:
+      mode: image
+      image: ocws-e2e-project:rev2
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "1", memory: 1Gi }
+  fixture-nix:
+    name: Kind Nix Fixture
+    repository: http://git-server.opencode-system.svc.cluster.local:8000/fixture.git
+    defaultRef: main
+    profileTarget: .env
+    trustTrackedEnvrc: true
+    environment:
+      mode: nix
+      flake: .#default
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "2", memory: 2Gi }

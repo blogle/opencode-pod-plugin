@@ -5,7 +5,7 @@ IFS=$'\n\t'
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 readonly ROOT
 readonly KIND_CONFIG="$ROOT/tests/e2e/kind.yaml"
-readonly MANIFESTS="$ROOT/tests/e2e/manifests.yaml"
+readonly E2E_DEPLOY="$ROOT/tests/e2e"
 readonly KEEP_KIND_CLUSTER=${KEEP_KIND_CLUSTER:-0}
 readonly SKIP_IMAGE_BUILD=${SKIP_IMAGE_BUILD:-0}
 readonly RUN_ID="$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM}"
@@ -127,7 +127,7 @@ docker exec "$CLUSTER_NAME-control-plane" ctr -n k8s.io images tag \
   "docker.io/library/ocws-e2e-project@$project_digest"
 
 printf '[e2e] deploying fixture control plane\n'
-kubectl --context "kind-$CLUSTER_NAME" apply -f "$MANIFESTS"
+kubectl --context "kind-$CLUSTER_NAME" apply -k "$E2E_DEPLOY"
 kubectl --context "kind-$CLUSTER_NAME" -n opencode-system rollout status deployment/git-server --timeout=180s
 kubectl --context "kind-$CLUSTER_NAME" -n opencode-system rollout status deployment/fake-llm --timeout=180s
 kubectl --context "kind-$CLUSTER_NAME" -n opencode-system rollout status deployment/central --timeout=300s

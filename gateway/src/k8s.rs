@@ -569,11 +569,13 @@ pub fn pod_manifest(
         ProjectEnvironment::Nix { flake } => Some(flake.as_str()),
         _ => None,
     };
-    let profile_script = match (has_profile, nix_flake.is_some()) {
-        (true, true) => "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\ncat /run/opencode-env/profile.envrc > /run/opencode/managed.envrc\nprintf '\\nuse flake %s\\n' \"$OPENCODE_NIX_FLAKE\" >> /run/opencode/managed.envrc\nln -s /run/opencode/managed.envrc /workspace/.envrc",
-        (true, false) => "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\nln -s /run/opencode-env/profile.envrc /workspace/.envrc",
-        (false, true) => "if ! git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then printf 'use flake %s\\n' \"$OPENCODE_NIX_FLAKE\" > /run/opencode/managed.envrc; ln -s /run/opencode/managed.envrc /workspace/.envrc; fi",
-        (false, false) => ":",
+    let profile_script = match (has_profile, nix_flake.is_some(), project.profile_target.as_str()) {
+        (true, true, ".envrc") => "if git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then echo 'tracked .envrc conflicts with private environment profile' >&2; exit 1; fi\ncat /run/opencode-env/profile.envrc > /run/opencode/managed.envrc\nprintf '\\nuse flake %s\\n' \"$OPENCODE_NIX_FLAKE\" >> /run/opencode/managed.envrc\nln -s /run/opencode/managed.envrc /workspace/.envrc".to_owned(),
+        (true, true, ".env") => "if git -C /workspace ls-files --error-unmatch .env >/dev/null 2>&1; then echo 'tracked environment profile target conflicts with private environment profile' >&2; exit 1; fi\nln -s /run/opencode-env/profile.envrc /workspace/.env\nif ! git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then printf 'use flake %s\\n' \"$OPENCODE_NIX_FLAKE\" > /run/opencode/managed.envrc; ln -s /run/opencode/managed.envrc /workspace/.envrc; fi".to_owned(),
+        (true, false, target @ (".envrc" | ".env")) => format!("if git -C /workspace ls-files --error-unmatch {target} >/dev/null 2>&1; then echo 'tracked environment profile target conflicts with private environment profile' >&2; exit 1; fi\nln -s /run/opencode-env/profile.envrc /workspace/{target}"),
+        (false, true, _) => "if ! git -C /workspace ls-files --error-unmatch .envrc >/dev/null 2>&1; then printf 'use flake %s\\n' \"$OPENCODE_NIX_FLAKE\" > /run/opencode/managed.envrc; ln -s /run/opencode/managed.envrc /workspace/.envrc; fi".to_owned(),
+        (false, false, _) => ":".to_owned(),
+        (true, _, target) => bail!("unsupported environment profile target {target}"),
     };
     let checkout_script = format!(
         r#"set -eu
@@ -619,7 +621,7 @@ chmod -R a+rwX /workspace /run/opencode"#
         ],
         "containers":[
           {"name":"workspace","image":image,"imagePullPolicy":"IfNotPresent","command":["/opt/opencode/bin/supervisor"],"workingDir":"/workspace","ports":[{"name":"opencode","containerPort":OPENCODE_PORT}],"env":[
-            {"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"OPENCODE_EXPERIMENTAL_WORKSPACES","value":"true"},{"name":"OPENCODE_CONFIG_DIR","value":"/opt/opencode/config"},{"name":"OPENCODE_SERVER_USERNAME","value":"opencode"},{"name":"OPENCODE_SERVER_PASSWORD","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"password"}}},{"name":"OPENCODE_AUTH_CONTENT","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"opencode-auth-content"}}},{"name":"OPENCODE_EXPECTED_VERSION","value":config.opencode.version},{"name":"OPENCODE_GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"runtime-token"}}},{"name":"OPENCODE_BASE_DOMAIN","value":config.base_domain},{"name":"OPENCODE_SUPERVISOR_ENDPOINT","value":format!("http://127.0.0.1:{SUPERVISOR_PORT}")},{"name":"OPENCODE_CHECKPOINT_ENDPOINT","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}")},{"name":"OPENCODE_CHECKPOINT_INTERVAL_SECONDS","value":config.checkpoint.periodic_seconds.to_string()},{"name":"OPENCODE_DIRENV_PATH","value":"/opt/opencode/bin/direnv"},{"name":"SUPERVISOR_LISTEN","value":format!("0.0.0.0:{SUPERVISOR_PORT}")},{"name":"SUPERVISOR_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"CHECKPOINT_SIDECAR_URL","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}/checkpoint")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"OPENCODE_NIX_FLAKE","value":nix_flake}
+            {"name":"OPENCODE_WORKSPACE_ID","value":workspace.id},{"name":"OPENCODE_PREVIEW_KEY","value":workspace.preview_key},{"name":"OPENCODE_EXPERIMENTAL_WORKSPACES","value":"true"},{"name":"OPENCODE_CONFIG_DIR","value":"/opt/opencode/config"},{"name":"OPENCODE_SERVER_USERNAME","value":"opencode"},{"name":"OPENCODE_SERVER_PASSWORD","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"password"}}},{"name":"OPENCODE_AUTH_CONTENT","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"opencode-auth-content"}}},{"name":"OPENCODE_EXPECTED_VERSION","value":config.opencode.version},{"name":"OPENCODE_GATEWAY_URL","value":config.runtime.gateway_url},{"name":"OPENCODE_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":runtime_secret_name(workspace),"key":"runtime-token"}}},{"name":"OPENCODE_BASE_DOMAIN","value":config.base_domain},{"name":"OPENCODE_TRUST_TRACKED_ENVRC","value":project.trust_tracked_envrc.to_string()},{"name":"OPENCODE_SUPERVISOR_ENDPOINT","value":format!("http://127.0.0.1:{SUPERVISOR_PORT}")},{"name":"OPENCODE_CHECKPOINT_ENDPOINT","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}")},{"name":"OPENCODE_CHECKPOINT_INTERVAL_SECONDS","value":config.checkpoint.periodic_seconds.to_string()},{"name":"OPENCODE_DIRENV_PATH","value":"/opt/opencode/bin/direnv"},{"name":"SUPERVISOR_LISTEN","value":format!("0.0.0.0:{SUPERVISOR_PORT}")},{"name":"SUPERVISOR_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"CHECKPOINT_SIDECAR_URL","value":format!("http://127.0.0.1:{CHECKPOINT_PORT}/checkpoint")},{"name":"CHECKPOINT_CONTROL_TOKEN_FILE","value":"/run/opencode-auth/runtime-token"},{"name":"OPENCODE_NIX_FLAKE","value":nix_flake}
           ],"volumeMounts":workspace_mounts,"resources":{"requests":{"cpu":project.resources.requests.cpu,"memory":project.resources.requests.memory},"limits":{"cpu":project.resources.limits.cpu,"memory":project.resources.limits.memory}},"readinessProbe":{"tcpSocket":{"port":OPENCODE_PORT},"periodSeconds":2,"failureThreshold":150},"terminationMessagePolicy":"FallbackToLogsOnError","securityContext":security}
         ]
       }
@@ -672,6 +674,7 @@ mod tests {
             opencode: OpenCodeConfig {
                 version: "1.18.3".into(),
                 central_url: "x".into(),
+                public_url: "https://opencode.test".into(),
             },
             runtime: RuntimeConfig {
                 image: "runtime:v1".into(),
@@ -715,6 +718,8 @@ mod tests {
             name: "Demo".into(),
             repository: "https://git/demo".into(),
             default_ref: "main".into(),
+            profile_target: ".envrc".into(),
+            trust_tracked_envrc: false,
             environment: ProjectEnvironment::Image {
                 image: "demo:dev".into(),
             },
@@ -769,7 +774,9 @@ mod tests {
             "OPENCODE_AUTH_CONTENT",
             "OPENCODE_GATEWAY_URL",
             "OPENCODE_GATEWAY_TOKEN",
+            "OPENCODE_PREVIEW_KEY",
             "OPENCODE_BASE_DOMAIN",
+            "OPENCODE_TRUST_TRACKED_ENVRC",
             "OPENCODE_SUPERVISOR_ENDPOINT",
             "OPENCODE_CHECKPOINT_ENDPOINT",
             "OPENCODE_CHECKPOINT_INTERVAL_SECONDS",
@@ -824,6 +831,16 @@ mod tests {
         let private_nix_checkout = private_nix_pod["spec"]["initContainers"][1].to_string();
         assert!(private_nix_checkout.contains("cat /run/opencode-env/profile.envrc"));
         assert!(private_nix_checkout.contains("use flake %s"));
+
+        project.profile_target = ".env".into();
+        project.trust_tracked_envrc = true;
+        let dotenv_pod = pod_manifest(&config, &workspace, &project, true).unwrap();
+        let dotenv_checkout = dotenv_pod["spec"]["initContainers"][1].to_string();
+        assert!(dotenv_checkout.contains("/workspace/.env"));
+        assert!(dotenv_checkout.contains("/workspace/.envrc"));
+        let dotenv_main = dotenv_pod["spec"]["containers"][0].to_string();
+        assert!(dotenv_main.contains("OPENCODE_TRUST_TRACKED_ENVRC"));
+        assert!(dotenv_main.contains("true"));
     }
 
     #[test]

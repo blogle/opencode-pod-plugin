@@ -80,6 +80,8 @@ struct RunArgs {
         default_value_t = 120
     )]
     checkpoint_timeout_seconds: u64,
+    #[arg(long, env = "OPENCODE_TRUST_TRACKED_ENVRC", default_value_t = false)]
+    trust_tracked_envrc: bool,
 }
 
 #[derive(Args)]
@@ -172,6 +174,7 @@ async fn main() -> Result<()> {
                 checkpoint_url: args.checkpoint_url,
                 checkpoint_token,
                 checkpoint_timeout: Duration::from_secs(args.checkpoint_timeout_seconds),
+                trust_tracked_envrc: args.trust_tracked_envrc,
             })
             .await
         }

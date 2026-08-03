@@ -27,6 +27,7 @@ pub struct Config {
 pub struct OpenCodeConfig {
     pub version: String,
     pub central_url: String,
+    pub public_url: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -88,8 +89,16 @@ pub struct Project {
     pub name: String,
     pub repository: String,
     pub default_ref: String,
+    #[serde(default = "default_profile_target")]
+    pub profile_target: String,
+    #[serde(default)]
+    pub trust_tracked_envrc: bool,
     pub environment: ProjectEnvironment,
     pub resources: Resources,
+}
+
+fn default_profile_target() -> String {
+    ".envrc".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -160,6 +169,9 @@ impl Config {
             if project.repository.is_empty() || project.default_ref.is_empty() {
                 bail!("project {key} repository and defaultRef are required");
             }
+            if !matches!(project.profile_target.as_str(), ".envrc" | ".env") {
+                bail!("project {key} profileTarget must be .envrc or .env");
+            }
         }
         Ok(file.projects)
     }
@@ -191,6 +203,8 @@ impl Config {
         {
             bail!("runtime.gatewayUrl must be an HTTP URL");
         }
+        validate_http_url(&self.opencode.central_url, "opencode.centralUrl")?;
+        validate_http_url(&self.opencode.public_url, "opencode.publicUrl")?;
         if self.checkpoint.periodic_seconds == 0
             || self.lifecycle.suspend_after_idle_seconds == 0
             || self.lifecycle.ready_timeout_seconds == 0
@@ -209,6 +223,25 @@ impl Config {
         }
         Ok(())
     }
+}
+
+fn validate_http_url(value: &str, name: &str) -> Result<()> {
+    let uri = value
+        .parse::<axum::http::Uri>()
+        .with_context(|| format!("{name} is invalid"))?;
+    if !matches!(uri.scheme_str(), Some("http" | "https"))
+        || uri.authority().is_none()
+        || uri
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+        || uri
+            .path_and_query()
+            .is_some_and(|value| value.path() != "/")
+        || uri.query().is_some()
+    {
+        bail!("{name} must be an HTTP URL");
+    }
+    Ok(())
 }
 
 fn validate_key(value: &str, name: &str) -> Result<()> {
@@ -233,10 +266,13 @@ mod tests {
         let projects = dir.path().join("projects.yaml");
         fs::write(&projects, "projects:\n  demo:\n    name: Demo\n    repository: https://git.test/demo.git\n    defaultRef: main\n    environment: { mode: image, image: registry.test/demo:dev }\n    resources:\n      requests: { cpu: 100m, memory: 128Mi }\n      limits: { cpu: '1', memory: 1Gi }\n").unwrap();
         let token = dir.path().join("internal-token");
-        let yaml = format!("namespace: sandboxes\nbaseDomain: test.invalid\nopencode: {{ version: 1.18.3, centralUrl: 'http://central:4096' }}\nruntime: {{ image: 'runtime:v1', genericNixImage: 'nix:v1', gatewayUrl: 'http://gateway:8080' }}\ncheckpoint: {{ path: '{}' }}\nlifecycle: {{ suspendAfterIdleSeconds: 60 }}\nauth: {{ mode: development, user: dev@test, internalTokenFile: '{}' }}\nprojectsFile: '{}'\n", token.display(), dir.path().display(), projects.display());
+        let yaml = format!("namespace: sandboxes\nbaseDomain: test.invalid\nopencode: {{ version: 1.18.3, centralUrl: 'http://central:4096', publicUrl: 'https://opencode.test' }}\nruntime: {{ image: 'runtime:v1', genericNixImage: 'nix:v1', gatewayUrl: 'http://gateway:8080' }}\ncheckpoint: {{ path: '{}' }}\nlifecycle: {{ suspendAfterIdleSeconds: 60 }}\nauth: {{ mode: development, user: dev@test, internalTokenFile: '{}' }}\nprojectsFile: '{}'\n", token.display(), dir.path().display(), projects.display());
         let config: Config = serde_yaml::from_str(&yaml).unwrap();
         config.validate().unwrap();
-        assert_eq!(config.projects().unwrap()["demo"].default_ref, "main");
+        let projects = config.projects().unwrap();
+        assert_eq!(projects["demo"].default_ref, "main");
+        assert_eq!(projects["demo"].profile_target, ".envrc");
+        assert!(!projects["demo"].trust_tracked_envrc);
         assert!(matches!(
             config.auth,
             AuthConfig::Development {
@@ -248,8 +284,18 @@ mod tests {
 
     #[test]
     fn rejects_latest_runtime_image() {
-        let yaml = "namespace: sandboxes\nbaseDomain: test.invalid\nopencode: { version: 1.18.3, centralUrl: x }\nruntime: { image: 'runtime:latest', genericNixImage: 'nix:v1', gatewayUrl: 'http://gateway:8080' }\ncheckpoint: { path: /tmp }\nlifecycle: { suspendAfterIdleSeconds: 60 }\nauth: { mode: development, user: dev }\nprojectsFile: projects.yaml\n";
+        let yaml = "namespace: sandboxes\nbaseDomain: test.invalid\nopencode: { version: 1.18.3, centralUrl: 'http://central', publicUrl: 'https://opencode.test' }\nruntime: { image: 'runtime:latest', genericNixImage: 'nix:v1', gatewayUrl: 'http://gateway:8080' }\ncheckpoint: { path: /tmp }\nlifecycle: { suspendAfterIdleSeconds: 60 }\nauth: { mode: development, user: dev }\nprojectsFile: projects.yaml\n";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_environment_profile_target() {
+        let dir = tempdir().unwrap();
+        let projects = dir.path().join("projects.yaml");
+        fs::write(&projects, "projects:\n  demo:\n    name: Demo\n    repository: https://git.test/demo.git\n    defaultRef: main\n    profileTarget: ../secret\n    environment: { mode: image, image: registry.test/demo:dev }\n    resources:\n      requests: { cpu: 100m, memory: 128Mi }\n      limits: { cpu: '1', memory: 1Gi }\n").unwrap();
+        let config: Config = serde_yaml::from_str(&format!("namespace: sandboxes\nbaseDomain: test.invalid\nopencode: {{ version: 1.18.3, centralUrl: 'http://central:4096', publicUrl: 'https://opencode.test' }}\nruntime: {{ image: 'runtime:v1', genericNixImage: 'nix:v1', gatewayUrl: 'http://gateway:8080' }}\ncheckpoint: {{ path: /tmp }}\nlifecycle: {{ suspendAfterIdleSeconds: 60 }}\nauth: {{ mode: development, user: dev@test }}\nprojectsFile: '{}'\n", projects.display())).unwrap();
+
+        assert!(config.projects().is_err());
     }
 }

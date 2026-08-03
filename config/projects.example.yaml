@@ -17,6 +17,9 @@ projects:
     name: Nix-backed Project
     repository: https://github.com/example/nix-project.git
     defaultRef: main
+    # Use these only when an operator-reviewed tracked .envrc loads .env.
+    profileTarget: .env
+    trustTrackedEnvrc: true
     environment:
       mode: nix
       flake: .#default

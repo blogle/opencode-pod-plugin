@@ -1,0 +1,17 @@
+projects:
+  dojo:
+    name: Dojo
+    repository: https://github.com/blogle/dojo2.git
+    defaultRef: master
+    profileTarget: .env
+    trustTrackedEnvrc: true
+    environment:
+      mode: nix
+      flake: .#default
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi

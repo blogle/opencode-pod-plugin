@@ -5,6 +5,7 @@ const env = {
   OPENCODE_GATEWAY_URL: "http://gateway.internal",
   OPENCODE_GATEWAY_TOKEN: "token",
   OPENCODE_WORKSPACE_ID: "wrk_ABC",
+  OPENCODE_PREVIEW_KEY: "wrk-abc-a1b2c3",
   OPENCODE_BASE_DOMAIN: "Preview.Test.",
   OPENCODE_CHECKPOINT_ENDPOINT: "http://127.0.0.1:4098",
   OPENCODE_SUPERVISOR_ENDPOINT: "http://127.0.0.1:4097",
@@ -31,7 +32,7 @@ describe("runtime plugin", () => {
     expect(Object.keys(hooks.tool ?? {})).toEqual(["preview"]);
     const preview = hooks.tool?.preview;
     expect(await preview?.execute({ port: 5173 }, {} as never)).toBe(
-      "https://wrk_ABC-5173.preview.test",
+      "https://wrk-abc-a1b2c3-5173.preview.test",
     );
     for (const port of [4096, 4097, 4098]) {
       await expect(preview?.execute({ port }, {} as never)).rejects.toThrow("reserved");

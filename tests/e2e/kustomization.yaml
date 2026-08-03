@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../deploy/base
+  - manifests.yaml
+  - allow-all-network.yaml
+
+configMapGenerator:
+  - name: opencode-platform-config
+    namespace: opencode-system
+    behavior: replace
+    files:
+      - platform.yaml=config/platform.yaml
+  - name: opencode-projects-config
+    namespace: opencode-system
+    behavior: replace
+    files:
+      - projects.yaml=config/projects.yaml
+
+images:
+  - name: ghcr.io/blogle/opencode-central
+    newName: ocws-e2e-central
+    newTag: rev2
+  - name: ghcr.io/blogle/opencode-gateway
+    newName: ocws-e2e-gateway
+    newTag: rev2
+
+patches:
+  - path: central-env.yaml

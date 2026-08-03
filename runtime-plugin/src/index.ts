@@ -123,7 +123,7 @@ export function createRuntimePlugin(dependencies: RuntimePluginDependencies = {}
             if (port === 4096 || port === 4097 || port === 4098) {
               throw new Error(`Port ${port} is reserved for workspace control services`);
             }
-            return `https://${config.workspaceId}-${port}.${config.baseDomain}`;
+            return `https://${config.previewKey}-${port}.${config.baseDomain}`;
           },
         }),
       },

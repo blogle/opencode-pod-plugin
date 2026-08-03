@@ -1,17 +1,15 @@
 namespace: opencode-sandboxes
-baseDomain: opencode.example.com
+baseDomain: opencode.thejeffer.net
 listen: 0.0.0.0:8080
 previewListen: 0.0.0.0:8081
 statePath: /var/lib/opencode-sandbox/gateway.sqlite3
 opencode:
   version: 1.18.3
   centralUrl: http://central.opencode-system.svc.cluster.local:4096
-  publicUrl: https://app.opencode.example.com
+  publicUrl: https://opencode.thejeffer.net
 runtime:
-  image: ghcr.io/example/opencode-sandbox-runtime:1.18.3
-  # Configure trusted Attic/substituter settings in this image or its runtime
-  # environment; credentials belong in a Secret, not this typed config.
-  genericNixImage: ghcr.io/example/opencode-sandbox-nix:1.18.3
+  image: ghcr.io/blogle/opencode-runtime:REPLACE_WITH_COMMIT_SHA
+  genericNixImage: ghcr.io/blogle/opencode-generic-nix:REPLACE_WITH_COMMIT_SHA
   gatewayUrl: http://gateway.opencode-system.svc.cluster.local:8080
 checkpoint:
   path: /var/lib/opencode-sandbox/checkpoints
@@ -23,6 +21,6 @@ lifecycle:
   terminationGraceSeconds: 180
 auth:
   mode: trusted-header
-  identityHeader: X-Auth-Request-Email
+  identityHeader: remote-email
   internalTokenFile: /run/opencode-gateway/token
 projectsFile: /etc/opencode-sandbox/projects.yaml

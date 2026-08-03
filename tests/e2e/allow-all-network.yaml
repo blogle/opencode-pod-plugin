@@ -1,0 +1,28 @@
+# Kind validates application behavior without requiring a NetworkPolicy-capable
+# CNI. These additive policies make the shared production base permissive only
+# inside the disposable E2E cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: e2e-allow-all
+  namespace: opencode-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: e2e-allow-all
+  namespace: opencode-sandboxes
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - {}
+  egress:
+    - {}

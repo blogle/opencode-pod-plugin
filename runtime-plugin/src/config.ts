@@ -2,6 +2,7 @@ export const RUNTIME_ENV = {
   gatewayUrl: "OPENCODE_GATEWAY_URL",
   gatewayToken: "OPENCODE_GATEWAY_TOKEN",
   workspaceId: "OPENCODE_WORKSPACE_ID",
+  previewKey: "OPENCODE_PREVIEW_KEY",
   baseDomain: "OPENCODE_BASE_DOMAIN",
   checkpointEndpoint: "OPENCODE_CHECKPOINT_ENDPOINT",
   supervisorEndpoint: "OPENCODE_SUPERVISOR_ENDPOINT",
@@ -13,6 +14,7 @@ export interface RuntimeConfig {
   gatewayUrl: string;
   gatewayToken: string;
   workspaceId: string;
+  previewKey: string;
   baseDomain: string;
   checkpointEndpoint: string;
   supervisorEndpoint: string;
@@ -57,6 +59,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(workspaceId)) {
     throw new Error(`${RUNTIME_ENV.workspaceId} contains invalid characters`);
   }
+  const previewKey = required(env, RUNTIME_ENV.previewKey).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(previewKey)) {
+    throw new Error(`${RUNTIME_ENV.previewKey} must be a DNS label`);
+  }
   const checkpointIntervalSeconds = Number(
     env[RUNTIME_ENV.checkpointIntervalSeconds]?.trim() || "120",
   );
@@ -68,6 +74,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     gatewayUrl: httpUrl(required(env, RUNTIME_ENV.gatewayUrl), RUNTIME_ENV.gatewayUrl),
     gatewayToken: required(env, RUNTIME_ENV.gatewayToken),
     workspaceId,
+    previewKey,
     baseDomain: baseDomain.toLowerCase(),
     checkpointEndpoint: httpUrl(
       env[RUNTIME_ENV.checkpointEndpoint]?.trim() || "http://127.0.0.1:4098",
