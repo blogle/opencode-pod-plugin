@@ -8,6 +8,14 @@ RUN nix profile install \
       github:NixOS/nixpkgs/a47c123a609287a012dfc44d281de2dd4ed13394#git
 RUN printf 'experimental-features = nix-command flakes\nbuild-users-group =\nsandbox = false\n' \
       > /etc/nix/nix.conf
+RUN install -d -m 0755 /opt/opencode-nix/bin \
+    && printf '%s\n' \
+      '#!/bin/sh' \
+      'unset LD_LIBRARY_PATH' \
+      'exec /nix/var/nix/profiles/default/bin/nix "$@"' \
+      > /opt/opencode-nix/bin/nix \
+    && chmod 0755 /opt/opencode-nix/bin/nix
+ENV PATH="/opt/opencode-nix/bin:${PATH}"
 RUN for file in passwd group shadow; do \
       source=$(readlink -f "/etc/$file"); \
       cp --remove-destination "$source" "/etc/$file"; \
