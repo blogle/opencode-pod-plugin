@@ -143,8 +143,7 @@ impl Store {
     pub fn workspaces(&self, owner: &str) -> Result<Vec<Workspace>> {
         let connection = self.0.lock().unwrap();
         let mut statement = connection.prepare(&format!(
-            "{} WHERE owner=? AND state != 'deleted' ORDER BY updated_at DESC",
-            SELECT_WORKSPACE
+            "{SELECT_WORKSPACE} WHERE owner=? AND state != 'deleted' ORDER BY updated_at DESC"
         ))?;
         let rows = statement.query_map([owner], map_workspace)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -154,8 +153,7 @@ impl Store {
     pub fn all_workspaces(&self) -> Result<Vec<Workspace>> {
         let connection = self.0.lock().unwrap();
         let mut statement = connection.prepare(&format!(
-            "{} WHERE state != 'deleted' ORDER BY updated_at DESC",
-            SELECT_WORKSPACE
+            "{SELECT_WORKSPACE} WHERE state != 'deleted' ORDER BY updated_at DESC"
         ))?;
         let rows = statement.query_map([], map_workspace)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -166,8 +164,7 @@ impl Store {
         let connection = self.0.lock().unwrap();
         let threshold = format!("-{idle_seconds} seconds");
         let mut statement = connection.prepare(&format!(
-            "{} WHERE state='running' AND last_activity <= datetime('now', ?) ORDER BY last_activity",
-            SELECT_WORKSPACE
+            "{SELECT_WORKSPACE} WHERE state='running' AND last_activity <= datetime('now', ?) ORDER BY last_activity"
         ))?;
         let rows = statement.query_map([threshold], map_workspace)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -178,7 +175,7 @@ impl Store {
         let connection = self.0.lock().unwrap();
         connection
             .query_row(
-                &format!("{} WHERE preview_key=?", SELECT_WORKSPACE),
+                &format!("{SELECT_WORKSPACE} WHERE preview_key=?"),
                 [key],
                 map_workspace,
             )
@@ -310,7 +307,7 @@ const SELECT_WORKSPACE: &str = "SELECT id,project_key,git_ref,owner,state,servic
 fn get_workspace(connection: &Connection, id: &str) -> Result<Option<Workspace>> {
     connection
         .query_row(
-            &format!("{} WHERE id=?", SELECT_WORKSPACE),
+            &format!("{SELECT_WORKSPACE} WHERE id=?"),
             [id],
             map_workspace,
         )

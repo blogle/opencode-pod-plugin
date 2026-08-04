@@ -14,7 +14,7 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
         };
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustToolchain = pkgs.rust-bin.stable."1.88.0".default.override {
           targets = [ "x86_64-unknown-linux-musl" ];
         };
       in
