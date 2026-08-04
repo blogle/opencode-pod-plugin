@@ -114,20 +114,14 @@ impl CentralClient {
         )
         .await?;
         Ok(LaunchResult {
-            session_url: self
-                .public_url
-                .join(&format!("session/{}", session.id))?
-                .to_string(),
+            session_url: self.public_url.to_string(),
             session_id: session.id,
             workspace_id: workspace.id,
         })
     }
 
-    pub fn session_url(&self, session_id: &str) -> Result<String> {
-        Ok(self
-            .public_url
-            .join(&format!("session/{session_id}"))?
-            .to_string())
+    pub fn session_url(&self, _session_id: &str) -> Result<String> {
+        Ok(self.public_url.to_string())
     }
 
     async fn post_json<T: Serialize + ?Sized, R: for<'de> Deserialize<'de>>(
@@ -261,10 +255,7 @@ mod tests {
 
         assert_eq!(result.session_id, "ses_1");
         assert_eq!(result.workspace_id, "wrk_1");
-        assert_eq!(
-            result.session_url,
-            "https://opencode.example.test/session/ses_1"
-        );
+        assert_eq!(result.session_url, "https://opencode.example.test/");
         assert_eq!(calls.lock().unwrap().len(), 3);
         let calls = calls.lock().unwrap();
         assert!(calls[0].0.contains("directory=%2Fcatalog%2Fdemo"));
